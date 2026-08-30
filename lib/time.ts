@@ -109,6 +109,29 @@ export function startOfWeek(date: Date): Date {
   return addDays(day, -offset);
 }
 
+export function startOfMonth(date: Date): Date {
+  const next = startOfDay(date);
+  next.setDate(1);
+  return next;
+}
+
+export function addMonths(date: Date, amount: number): Date {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + amount);
+  return next;
+}
+
+export function daysInMonth(date: Date): Date[] {
+  const start = startOfMonth(date);
+  const days: Date[] = [];
+  const cursor = new Date(start);
+  while (cursor.getMonth() === start.getMonth()) {
+    days.push(startOfDay(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
+
 export function hoursUntil(iso: string, now = new Date()): number {
   return (new Date(iso).getTime() - now.getTime()) / 3_600_000;
 }

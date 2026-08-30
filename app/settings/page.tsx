@@ -9,14 +9,25 @@ export default function SettingsPage() {
   return (
     <main className="grid gap-6 md:grid-cols-2">
       <section className="card p-5">
-        <h2 className="text-2xl">Energy and limits</h2>
+        <h2 className="text-2xl">Profile & limits</h2>
         <div className="grid-form mt-4">
+          <label className="field" style={{ gridColumn: "1 / -1" }}>
+            Your name
+            <input
+              value={prefs.studentName}
+              onChange={(event) =>
+                updatePreferences({ studentName: event.target.value })
+              }
+            />
+          </label>
           <label className="field">
             Wake
             <input
               type="time"
               value={prefs.wakeTime}
-              onChange={(event) => updatePreferences({ wakeTime: event.target.value })}
+              onChange={(event) =>
+                updatePreferences({ wakeTime: event.target.value })
+              }
             />
           </label>
           <label className="field">
@@ -24,7 +35,9 @@ export default function SettingsPage() {
             <input
               type="time"
               value={prefs.sleepTime}
-              onChange={(event) => updatePreferences({ sleepTime: event.target.value })}
+              onChange={(event) =>
+                updatePreferences({ sleepTime: event.target.value })
+              }
             />
           </label>
           <label className="field">
@@ -32,7 +45,9 @@ export default function SettingsPage() {
             <input
               type="time"
               value={prefs.noWorkAfter}
-              onChange={(event) => updatePreferences({ noWorkAfter: event.target.value })}
+              onChange={(event) =>
+                updatePreferences({ noWorkAfter: event.target.value })
+              }
             />
           </label>
           <label className="field">
@@ -43,7 +58,9 @@ export default function SettingsPage() {
               max={120}
               value={prefs.workBlockMinutes}
               onChange={(event) =>
-                updatePreferences({ workBlockMinutes: Number(event.target.value) })
+                updatePreferences({
+                  workBlockMinutes: Number(event.target.value),
+                })
               }
             />
           </label>
@@ -66,7 +83,9 @@ export default function SettingsPage() {
               min={30}
               value={prefs.maxWeeknightMinutes}
               onChange={(event) =>
-                updatePreferences({ maxWeeknightMinutes: Number(event.target.value) })
+                updatePreferences({
+                  maxWeeknightMinutes: Number(event.target.value),
+                })
               }
             />
           </label>
@@ -77,22 +96,26 @@ export default function SettingsPage() {
               min={30}
               value={prefs.maxWeekendMinutes}
               onChange={(event) =>
-                updatePreferences({ maxWeekendMinutes: Number(event.target.value) })
+                updatePreferences({
+                  maxWeekendMinutes: Number(event.target.value),
+                })
               }
             />
           </label>
         </div>
       </section>
       <section className="card p-5">
-        <h2 className="text-2xl">How Stride plans</h2>
-        <ul className="mt-4 space-y-3 text-[var(--ink-soft)]">
-          <li>Fixed school, sports, and travel are never overwritten.</li>
-          <li>Large projects are split into sittings and front-loaded.</li>
-          <li>Harder work is placed earlier in the open evening.</li>
-          <li>Skip, partial, or add work and the rest of the week is rebuilt.</li>
-        </ul>
+        <h2 className="text-2xl">How planning works</h2>
+        <ol className="mt-4 list-decimal space-y-3 pl-5 text-[var(--ink-soft)]">
+          <li>Add work, extracurriculars, sports, and other fixed time.</li>
+          <li>Open Weekly and press Generate plan.</li>
+          <li>
+            Stride builds today, tomorrow, next week, and the week after.
+          </li>
+          <li>Check off blocks as you finish. Rebuild when life changes.</li>
+        </ol>
         <button className="btn secondary mt-6" onClick={resetDemo}>
-          Reset to a sample student week
+          Reset to sample week (clears the plan)
         </button>
       </section>
     </main>

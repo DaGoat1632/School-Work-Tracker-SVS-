@@ -22,7 +22,8 @@ import {
 type Interval = { start: number; end: number };
 
 const MIN_BLOCK = 15;
-const HORIZON_DAYS = 21;
+/** Cover through next month so sidebar month view can show scheduled work. */
+export const HORIZON_DAYS = 62;
 
 function difficultyWeight(difficulty: Task["difficulty"]): number {
   if (difficulty === "hard") return 1.4;

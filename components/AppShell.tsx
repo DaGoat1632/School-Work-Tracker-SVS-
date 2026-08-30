@@ -2,51 +2,79 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { conflictCount } from "@/lib/plan";
 import { useStore } from "@/lib/store";
 
-const LINKS = [
-  { href: "/", label: "Today" },
-  { href: "/week", label: "Week" },
-  { href: "/work", label: "Work" },
-  { href: "/life", label: "Life" },
-  { href: "/settings", label: "Settings" },
+const NAV = [
+  { href: "/schedule/today", label: "Today", icon: "📅" },
+  { href: "/schedule/tomorrow", label: "Tomorrow", icon: "🗓" },
+  { href: "/schedule/week", label: "This week", icon: "▦" },
+  { href: "/schedule/next-week", label: "Next week", icon: "▣" },
+  { href: "/schedule/month", label: "Next month", icon: "📆" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const hydrated = useStore().hydrated;
+  const { state, hydrated } = useStore();
+  const conflicts = conflictCount(state);
 
   return (
-    <div className="mx-auto min-h-screen max-w-6xl px-4 pb-16 pt-6 md:px-8">
-      <header className="mb-8 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="chip">Student planner</p>
-          <h1 className="mt-3 text-4xl leading-none md:text-5xl">Stride</h1>
-          <p className="mt-2 max-w-xl text-[0.95rem] text-[var(--ink-soft)]">
-            Dump the week in. The scheduler spreads projects, protects sports and
-            sleep, and rebuilds the plan when you miss a block.
-          </p>
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="px-2 pb-2">
+          <div className="flex items-center gap-2.5">
+            <div
+              className="grid h-10 w-10 place-items-center rounded-2xl text-lg font-bold text-[#fff4ec]"
+              style={{ background: "var(--work)" }}
+            >
+              S
+            </div>
+            <div>
+              <p className="display text-2xl leading-none">Stride</p>
+              <p className="text-xs text-[var(--ink-soft)]">Your schedule</p>
+            </div>
+          </div>
         </div>
-        <nav className="flex flex-wrap gap-2">
-          {LINKS.map((link) => {
-            const active = pathname === link.href;
+
+        <nav className="sidebar-nav flex flex-col gap-1.5 px-1">
+          {NAV.map((link) => {
+            const active =
+              pathname === link.href || pathname.startsWith(`${link.href}/`);
             return (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`rounded-full px-4 py-2 text-sm font-medium ${
-                  active
-                    ? "bg-[var(--ink)] text-[#f7efe3]"
-                    : "border border-[var(--line)] bg-[#fffaf3]/60"
-                }`}
+                className={`sidebar-link ${active ? "active" : ""}`}
               >
-                {link.label}
+                <span className="sidebar-icon" aria-hidden>
+                  {link.icon}
+                </span>
+                <span>{link.label}</span>
               </Link>
             );
           })}
         </nav>
-      </header>
-      {hydrated ? children : <p className="text-[var(--ink-soft)]">Loading your week…</p>}
+
+        <div className="mt-auto space-y-2 px-1">
+          {conflicts > 0 && (
+            <div className="conflict-pill">
+              ⚠ {conflicts} time conflict{conflicts === 1 ? "" : "s"}
+            </div>
+          )}
+          <Link
+            href="/settings"
+            className={`sidebar-link ${pathname.startsWith("/settings") ? "active" : ""}`}
+          >
+            <span className="sidebar-icon" aria-hidden>
+              ⚙
+            </span>
+            <span>Settings</span>
+          </Link>
+        </div>
+      </aside>
+      <div className="main">
+        {hydrated ? children : <p className="text-[var(--ink-soft)]">Loading…</p>}
+      </div>
     </div>
   );
 }

@@ -110,11 +110,12 @@ export function createSeedState(): AppState {
   ];
 
   return {
-    preferences: { ...DEFAULT_PREFERENCES },
+    preferences: { ...DEFAULT_PREFERENCES, studentName: "Pratham" },
     events,
     tasks,
     blocks: [],
     warnings: [],
     lastPlannedAt: null,
+    planReady: false,
   };
 }

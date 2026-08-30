@@ -1,8 +1,6 @@
 # Stride
 
-A student planner that builds a **realistic week** around homework, projects, school, sports, commute, sleep, and breaks.
-
-Add assignments and fixed activities. The Smart Scheduler spreads large projects across days, ranks work by deadline and difficulty, stays out of practice and travel time, and rebuilds the calendar if you skip a block or add something new.
+A student planner with a Weekly dashboard: add your work and life first, then generate a plan for **today, tomorrow, next week, and the week after**.
 
 ## Run it
 
@@ -13,10 +11,19 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Data stays in the browser.
 
-## Pages
+## Flow
 
-- **Today** — timeline with Done / Partial / Skip (skip and partial replan the rest of the week)
-- **Week** — school, sports, travel, and scheduled work
-- **Work** — assignments
-- **Life** — recurring or one-off activities plus drive time
-- **Settings** — sleep, nightly caps, block and break length
+1. **Add work** — homework, projects, quizzes, tests  
+2. **Extracurricular / Sports / Other** — clubs, games, school, jobs, family  
+3. **Weekly → Generate plan** — fills free time around fixed events  
+4. **Check off** blocks as you finish; rebuild when something changes  
+
+## Tabs
+
+- Weekly  
+- Add work  
+- Extracurricular  
+- Sports & games  
+- Other  
+- Homework  
+- Settings  

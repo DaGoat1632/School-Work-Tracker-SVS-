@@ -13,7 +13,13 @@ function defaultDue(): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function TaskForm() {
+export function TaskForm({
+  heading = "Add work",
+  blurb = "Homework, projects, quizzes, and tests. Submit everything, then generate your plan on Weekly.",
+}: {
+  heading?: string;
+  blurb?: string;
+}) {
   const addTask = useStore().addTask;
   const [title, setTitle] = useState("");
   const [className, setClassName] = useState("");
@@ -22,6 +28,7 @@ export function TaskForm() {
   const [estimatedMinutes, setEstimatedMinutes] = useState(45);
   const [difficulty, setDifficulty] = useState<Difficulty>("medium");
   const [canSplit, setCanSplit] = useState(true);
+  const [saved, setSaved] = useState(false);
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -38,14 +45,13 @@ export function TaskForm() {
     setTitle("");
     setClassName("");
     setEstimatedMinutes(type === "project" ? 120 : 45);
+    setSaved(true);
   }
 
   return (
     <form className="card p-5" onSubmit={onSubmit}>
-      <h2 className="text-2xl">Add work</h2>
-      <p className="mt-1 mb-4 text-sm text-[var(--ink-soft)]">
-        Due date, estimate, and difficulty are what the scheduler actually uses.
-      </p>
+      <h2 className="text-2xl">{heading}</h2>
+      <p className="mt-1 mb-4 text-sm text-[var(--ink-soft)]">{blurb}</p>
       <div className="grid-form">
         <label className="field" style={{ gridColumn: "1 / -1" }}>
           Title
@@ -66,7 +72,10 @@ export function TaskForm() {
         </label>
         <label className="field">
           Type
-          <select value={type} onChange={(event) => setType(event.target.value as TaskType)}>
+          <select
+            value={type}
+            onChange={(event) => setType(event.target.value as TaskType)}
+          >
             {TASK_TYPES.map((item) => (
               <option key={item.value} value={item.value}>
                 {item.label}
@@ -99,12 +108,15 @@ export function TaskForm() {
             value={difficulty}
             onChange={(event) => setDifficulty(event.target.value as Difficulty)}
           >
-            <option value="easy">Easy — fine later in the evening</option>
+            <option value="easy">Easy</option>
             <option value="medium">Medium</option>
-            <option value="hard">Hard — schedule while you are fresher</option>
+            <option value="hard">Hard</option>
           </select>
         </label>
-        <label className="field mt-6 flex-row items-center gap-2 text-[var(--ink)]" style={{ flexDirection: "row" }}>
+        <label
+          className="field mt-6 items-center gap-2 text-[var(--ink)]"
+          style={{ flexDirection: "row" }}
+        >
           <input
             type="checkbox"
             checked={canSplit}
@@ -113,9 +125,16 @@ export function TaskForm() {
           Split across multiple sittings
         </label>
       </div>
-      <button className="btn mt-5" type="submit">
-        Add and rebuild week
-      </button>
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <button className="btn work" type="submit">
+          Save work
+        </button>
+        {saved && (
+          <p className="text-sm" style={{ color: "var(--ok)" }}>
+            Saved. Add more, or go to Weekly and generate your plan.
+          </p>
+        )}
+      </div>
     </form>
   );
 }

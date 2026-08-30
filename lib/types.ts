@@ -17,6 +17,7 @@ export type EventCategory =
 export type BlockStatus = "planned" | "done" | "skipped" | "partial";
 
 export type Preferences = {
+  studentName: string;
   wakeTime: string;
   sleepTime: string;
   noWorkAfter: string;
@@ -76,9 +77,11 @@ export type AppState = {
   blocks: ScheduledBlock[];
   warnings: Warning[];
   lastPlannedAt: string | null;
+  planReady: boolean;
 };
 
 export const DEFAULT_PREFERENCES: Preferences = {
+  studentName: "there",
   wakeTime: "07:00",
   sleepTime: "23:00",
   noWorkAfter: "22:00",

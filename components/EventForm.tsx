@@ -8,16 +8,31 @@ import type { EventCategory } from "@/lib/types";
 
 const DAYS = [1, 2, 3, 4, 5, 6, 0];
 
-export function EventForm() {
+export function EventForm({
+  heading = "Add a life block",
+  blurb = "Fixed time that work must plan around.",
+  defaultCategory = "sports",
+  lockedCategory,
+  titlePlaceholder = "Soccer, robotics, shift, family dinner...",
+}: {
+  heading?: string;
+  blurb?: string;
+  defaultCategory?: EventCategory;
+  lockedCategory?: EventCategory;
+  titlePlaceholder?: string;
+}) {
   const addEvent = useStore().addEvent;
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState<EventCategory>("sports");
+  const [category, setCategory] = useState<EventCategory>(
+    lockedCategory ?? defaultCategory,
+  );
   const [startTime, setStartTime] = useState("16:30");
   const [endTime, setEndTime] = useState("18:00");
   const [daysOfWeek, setDaysOfWeek] = useState<number[]>([2, 4]);
   const [specificDate, setSpecificDate] = useState("");
   const [travelMinutesBefore, setTravelMinutesBefore] = useState(15);
   const [travelMinutesAfter, setTravelMinutesAfter] = useState(15);
+  const [saved, setSaved] = useState(false);
 
   function toggleDay(day: number) {
     setDaysOfWeek((current) =>
@@ -32,7 +47,7 @@ export function EventForm() {
     if (!title.trim()) return;
     addEvent({
       title: title.trim(),
-      category,
+      category: lockedCategory ?? category,
       startTime,
       endTime,
       daysOfWeek: specificDate ? [] : daysOfWeek,
@@ -41,38 +56,40 @@ export function EventForm() {
       travelMinutesAfter,
     });
     setTitle("");
+    setSaved(true);
   }
 
   return (
     <form className="card p-5" onSubmit={onSubmit}>
-      <h2 className="text-2xl">Add a life block</h2>
-      <p className="mt-1 mb-4 text-sm text-[var(--ink-soft)]">
-        School, practice, clubs, jobs, and drive time are fixed. Work fills what
-        is left.
-      </p>
+      <h2 className="text-2xl">{heading}</h2>
+      <p className="mt-1 mb-4 text-sm text-[var(--ink-soft)]">{blurb}</p>
       <div className="grid-form">
         <label className="field" style={{ gridColumn: "1 / -1" }}>
           Title
           <input
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="Soccer, shift, piano, family dinner..."
+            placeholder={titlePlaceholder}
             required
           />
         </label>
-        <label className="field">
-          Category
-          <select
-            value={category}
-            onChange={(event) => setCategory(event.target.value as EventCategory)}
-          >
-            {EVENT_CATEGORIES.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {!lockedCategory && (
+          <label className="field">
+            Category
+            <select
+              value={category}
+              onChange={(event) =>
+                setCategory(event.target.value as EventCategory)
+              }
+            >
+              {EVENT_CATEGORIES.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="field">
           One-off date
           <input
@@ -105,7 +122,9 @@ export function EventForm() {
             type="number"
             min={0}
             value={travelMinutesBefore}
-            onChange={(event) => setTravelMinutesBefore(Number(event.target.value))}
+            onChange={(event) =>
+              setTravelMinutesBefore(Number(event.target.value))
+            }
           />
         </label>
         <label className="field">
@@ -114,7 +133,9 @@ export function EventForm() {
             type="number"
             min={0}
             value={travelMinutesAfter}
-            onChange={(event) => setTravelMinutesAfter(Number(event.target.value))}
+            onChange={(event) =>
+              setTravelMinutesAfter(Number(event.target.value))
+            }
           />
         </label>
       </div>
@@ -142,9 +163,16 @@ export function EventForm() {
           </div>
         </div>
       )}
-      <button className="btn mt-5" type="submit">
-        Add and rebuild week
-      </button>
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <button className="btn" type="submit">
+          Save
+        </button>
+        {saved && (
+          <p className="text-sm" style={{ color: "var(--ok)" }}>
+            Saved. Keep adding, then generate your plan on Weekly.
+          </p>
+        )}
+      </div>
     </form>
   );
 }

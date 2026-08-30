@@ -27,28 +27,37 @@ const EMPTY_STATE: AppState = {
   blocks: [],
   warnings: [],
   lastPlannedAt: null,
+  planReady: false,
 };
 
-const STORAGE_KEY = "stride-student-planner-v1";
+const STORAGE_KEY = "stride-student-planner-v2";
 
 type StoreValue = {
   state: AppState;
   hydrated: boolean;
-  addTask: (input: Omit<Task, "id" | "createdAt" | "remainingMinutes" | "completed">) => void;
+  addTask: (
+    input: Omit<Task, "id" | "createdAt" | "remainingMinutes" | "completed">,
+  ) => void;
   updateTask: (id: string, patch: Partial<Task>) => void;
   removeTask: (id: string) => void;
   addEvent: (input: Omit<FixedEvent, "id">) => void;
   updateEvent: (id: string, patch: Partial<FixedEvent>) => void;
   removeEvent: (id: string) => void;
   updatePreferences: (patch: Partial<Preferences>) => void;
-  markBlock: (blockId: string, status: ScheduledBlock["status"], completedMinutes?: number) => void;
+  markBlock: (
+    blockId: string,
+    status: ScheduledBlock["status"],
+    completedMinutes?: number,
+  ) => void;
+  toggleBlockDone: (blockId: string) => void;
+  generatePlan: () => void;
   replan: () => void;
   resetDemo: () => void;
 };
 
 const StoreContext = createContext<StoreValue | null>(null);
 
-function plan(state: AppState): AppState {
+function runPlan(state: AppState): AppState {
   const { blocks, warnings } = buildSchedule({
     tasks: state.tasks,
     events: state.events,
@@ -59,19 +68,27 @@ function plan(state: AppState): AppState {
     ...state,
     blocks,
     warnings,
+    planReady: true,
     lastPlannedAt: new Date().toISOString(),
   };
 }
 
 function loadState(): AppState {
-  if (typeof window === "undefined") return createSeedState();
+  const seed = createSeedState();
+  if (typeof window === "undefined") return seed;
   const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) return plan(createSeedState());
+  if (!raw) return seed;
   try {
     const parsed = JSON.parse(raw) as AppState;
-    return plan(parsed);
+    const merged: AppState = {
+      ...seed,
+      ...parsed,
+      preferences: { ...DEFAULT_PREFERENCES, ...parsed.preferences },
+      planReady: Boolean(parsed.planReady),
+    };
+    return merged.planReady ? runPlan(merged) : merged;
   } catch {
-    return plan(createSeedState());
+    return seed;
   }
 }
 
@@ -94,89 +111,105 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       state,
       hydrated,
       addTask: (input) => {
-        setState((current) =>
-          plan({
-            ...current,
-            tasks: [
-              ...current.tasks,
-              {
-                ...input,
-                id: uid(),
-                remainingMinutes: input.estimatedMinutes,
-                completed: false,
-                createdAt: new Date().toISOString(),
-              },
-            ],
-          }),
-        );
+        setState((current) => ({
+          ...current,
+          planReady: false,
+          blocks: [],
+          warnings: [],
+          lastPlannedAt: null,
+          tasks: [
+            ...current.tasks,
+            {
+              ...input,
+              id: uid(),
+              remainingMinutes: input.estimatedMinutes,
+              completed: false,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        }));
       },
       updateTask: (id, patch) => {
-        setState((current) =>
-          plan({
-            ...current,
-            tasks: current.tasks.map((task) =>
-              task.id === id ? { ...task, ...patch } : task,
-            ),
-          }),
-        );
+        setState((current) => ({
+          ...current,
+          planReady: false,
+          blocks: [],
+          warnings: [],
+          tasks: current.tasks.map((task) =>
+            task.id === id ? { ...task, ...patch } : task,
+          ),
+        }));
       },
       removeTask: (id) => {
-        setState((current) =>
-          plan({
-            ...current,
-            tasks: current.tasks.filter((task) => task.id !== id),
-            blocks: current.blocks.filter((block) => block.taskId !== id),
-          }),
-        );
+        setState((current) => ({
+          ...current,
+          planReady: false,
+          blocks: [],
+          warnings: [],
+          tasks: current.tasks.filter((task) => task.id !== id),
+        }));
       },
       addEvent: (input) => {
-        setState((current) =>
-          plan({
-            ...current,
-            events: [...current.events, { ...input, id: uid() }],
-          }),
-        );
+        setState((current) => ({
+          ...current,
+          planReady: false,
+          blocks: [],
+          warnings: [],
+          lastPlannedAt: null,
+          events: [...current.events, { ...input, id: uid() }],
+        }));
       },
       updateEvent: (id, patch) => {
-        setState((current) =>
-          plan({
-            ...current,
-            events: current.events.map((event) =>
-              event.id === id ? { ...event, ...patch } : event,
-            ),
-          }),
-        );
+        setState((current) => ({
+          ...current,
+          planReady: false,
+          blocks: [],
+          warnings: [],
+          events: current.events.map((event) =>
+            event.id === id ? { ...event, ...patch } : event,
+          ),
+        }));
       },
       removeEvent: (id) => {
-        setState((current) =>
-          plan({
-            ...current,
-            events: current.events.filter((event) => event.id !== id),
-          }),
-        );
+        setState((current) => ({
+          ...current,
+          planReady: false,
+          blocks: [],
+          warnings: [],
+          events: current.events.filter((event) => event.id !== id),
+        }));
       },
       updatePreferences: (patch) => {
-        setState((current) =>
-          plan({
+        setState((current) => {
+          const next = {
             ...current,
             preferences: { ...current.preferences, ...patch },
-          }),
-        );
+          };
+          return current.planReady ? runPlan(next) : next;
+        });
       },
       markBlock: (blockId, status, completedMinutes) => {
         setState((current) => {
           const block = current.blocks.find((item) => item.id === blockId);
-          if (!block) return current;
+          if (!block || !current.planReady) return current;
           const tasks = current.tasks.map((task) => {
             if (task.id !== block.taskId) return task;
             if (status === "done") {
               const remaining = Math.max(0, task.remainingMinutes - block.minutes);
-              return { ...task, remainingMinutes: remaining, completed: remaining === 0 };
+              return {
+                ...task,
+                remainingMinutes: remaining,
+                completed: remaining === 0,
+              };
             }
             if (status === "partial") {
               const done = Math.min(completedMinutes ?? 0, block.minutes);
               const remaining = Math.max(0, task.remainingMinutes - done);
-              return { ...task, remainingMinutes: remaining, completed: remaining === 0 };
+              return {
+                ...task,
+                remainingMinutes: remaining,
+                completed: remaining === 0,
+              };
             }
             return task;
           });
@@ -185,16 +218,58 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               ? { ...item, status, completedMinutes }
               : item,
           );
-          return plan({ ...current, tasks, blocks });
+          return runPlan({ ...current, tasks, blocks });
         });
       },
-      replan: () => setState((current) => plan(current)),
-      resetDemo: () => setState(plan(createSeedState())),
+      toggleBlockDone: (blockId) => {
+        setState((current) => {
+          const block = current.blocks.find((item) => item.id === blockId);
+          if (!block || !current.planReady) return current;
+
+          if (block.status === "done") {
+            const tasks = current.tasks.map((task) => {
+              if (task.id !== block.taskId) return task;
+              const remaining = task.remainingMinutes + block.minutes;
+              return {
+                ...task,
+                remainingMinutes: remaining,
+                completed: false,
+                estimatedMinutes: Math.max(task.estimatedMinutes, remaining),
+              };
+            });
+            const blocks = current.blocks.map((item) =>
+              item.id === blockId
+                ? { ...item, status: "planned" as const, completedMinutes: undefined }
+                : item,
+            );
+            return runPlan({ ...current, tasks, blocks });
+          }
+
+          const tasks = current.tasks.map((task) => {
+            if (task.id !== block.taskId) return task;
+            const remaining = Math.max(0, task.remainingMinutes - block.minutes);
+            return {
+              ...task,
+              remainingMinutes: remaining,
+              completed: remaining === 0,
+            };
+          });
+          const blocks = current.blocks.map((item) =>
+            item.id === blockId ? { ...item, status: "done" as const } : item,
+          );
+          return runPlan({ ...current, tasks, blocks });
+        });
+      },
+      generatePlan: () => setState((current) => runPlan({ ...current, blocks: [] })),
+      replan: () => setState((current) => runPlan(current)),
+      resetDemo: () => setState(createSeedState()),
     }),
     [state, hydrated],
   );
 
-  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+  return (
+    <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
+  );
 }
 
 export function useStore(): StoreValue {
