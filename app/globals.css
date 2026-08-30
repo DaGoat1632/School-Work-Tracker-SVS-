@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #efe6d6;
+  --paper-deep: #e4d7c2;
+  --ink: #1b1712;
+  --ink-soft: #5c5348;
+  --line: rgba(27, 23, 18, 0.12);
+  --work: #c24a1a;
+  --work-deep: #8f2f0e;
+  --school: #1f4b63;
+  --sports: #2a6a4a;
+  --club: #5a3d7a;
+  --job: #8a5a12;
+  --family: #7a3d4a;
+  --travel: #6d6458;
+  --warn: #9a2f1a;
+  --ok: #2a6a4a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  min-height: 100%;
+}
+
+body {
+  background-image:
+    radial-gradient(circle at 12% -8%, rgba(194, 74, 26, 0.12), transparent 36%),
+    radial-gradient(circle at 100% 0%, rgba(31, 75, 99, 0.1), transparent 32%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+h1,
+h2,
+.display {
+  font-family: var(--font-display), Georgia, serif;
+  font-optical-sizing: auto;
+}
+
+.card {
+  background: rgba(255, 250, 242, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: 0 18px 40px rgba(27, 23, 18, 0.05);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--paper-deep);
+}
+
+.btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.7rem 1.05rem;
+  background: var(--ink);
+  color: #f7efe3;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn.secondary {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--ink-soft);
+  padding-inline: 0.7rem;
+}
+
+.btn.warn {
+  background: var(--warn);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.field input,
+.field select,
+.field textarea {
+  background: #fffaf3;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.7rem 0.8rem;
+  color: var(--ink);
+}
+
+.grid-form {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 720px) {
+  .grid-form {
+    grid-template-columns: 1fr;
+  }
+}
