@@ -65,6 +65,7 @@ export function TodayDashboard() {
                   {item.emoji} {item.kind === "break" ? <strong>{item.title}</strong> : item.title}
                   {item.kind === "work" ? ` · ${formatDuration(item.minutes)}` : ""}
                   {item.kind === "free" ? ` · ${formatDuration(item.minutes)}` : ""}
+                  {item.kind === "personal" ? ` · ${formatDuration(item.minutes)}` : ""}
                 </p>
               </li>
             ))}
@@ -105,16 +106,23 @@ export function TodayDashboard() {
             <li key={plan.task.id}>
               <p className="font-medium">{plan.task.title}</p>
               <p className="text-sm text-[var(--ink-soft)]">
-                {trackLabel(plan.track)} · {formatDuration(plan.planned)} planned /{" "}
-                {formatDuration(plan.needed)} needed · {formatDue(plan.task.dueAt)}
+                {trackLabel(plan.track)} · Required {formatDuration(plan.needed)} · Scheduled{" "}
+                {formatDuration(plan.planned)} · Remaining {formatDuration(plan.remaining)} ·{" "}
+                {formatDue(plan.task.dueAt)}
               </p>
-              {plan.track === "at_risk" && (
+              {plan.track === "at_risk" && plan.shortBy > 0 && (
                 <div className="mt-2 text-sm" style={{ color: "var(--warn)" }}>
                   <p>🚨 At risk</p>
                   <p>You need: {formatDuration(plan.needed)}</p>
                   <p>Available: {formatDuration(plan.availableBeforeDeadline)}</p>
                   <p>Short by: {formatDuration(plan.shortBy)}</p>
                 </div>
+              )}
+              {plan.track === "needs_planning" && plan.remaining > 0 && (
+                <p className="mt-2 text-sm text-[var(--ink-soft)]">
+                  {formatDuration(plan.remaining)} still needs a spot on the calendar, and there is
+                  enough time before the deadline to fit it.
+                </p>
               )}
               <ul className="mt-1 space-y-1 text-sm text-[var(--ink-soft)]">
                 {plan.sessions.map((session) => (

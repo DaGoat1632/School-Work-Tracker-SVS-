@@ -21,7 +21,7 @@ type TimelineItem = {
   title: string;
   startMin: number;
   endMin: number;
-  kind: "work" | "event" | "travel" | "free" | "break";
+  kind: "work" | "event" | "travel" | "free" | "break" | "personal";
   color: string;
   minutes: number;
   status?: string;
@@ -103,7 +103,9 @@ function buildItems(
           ? "var(--work)"
           : item.kind === "break"
             ? "#c4843a"
-            : "var(--ok)",
+            : item.kind === "personal"
+              ? "#b56b4a"
+              : "var(--ok)",
       minutes: item.minutes,
     });
   }
@@ -176,6 +178,7 @@ function DayTimeline({
                       {formatClock(toClock(item.endMin))}
                       {item.kind === "work" ? " · work" : ""}
                       {item.kind === "break" ? " · break" : ""}
+                      {item.kind === "personal" ? " · personal" : ""}
                       {item.kind === "travel" ? " · travel" : ""}
                       {item.kind === "free" ? " · free time" : ""}
                     </p>

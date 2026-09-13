@@ -6,8 +6,15 @@ import {
   createTaskPlan,
   generateDeadlineReminders,
   generatePlanningNotifications,
+  getCoachDayPlan,
   getTodayActionPlan,
+  isAcademicSchoolDay,
+  classifyTaskTrack,
+  shortfallMinutes,
+  validateDailyPlan,
+  validateTaskPlannedDuration,
 } from "../lib/planning";
+import { buildSchedule } from "../lib/scheduler";
 import { addDays, combineDateAndTime, startOfDay, toISODate } from "../lib/time";
 import { DEFAULT_PREFERENCES } from "../lib/types";
 import type { AppState, Task } from "../lib/types";
@@ -206,8 +213,8 @@ assert("TEST 9 zero overlapping sessions", !overlap, allSessions.map((s) => `${s
 const chemSessions = reserved.find((p) => p.task.id === "chem")?.sessions.filter((s) => s.dateKey === toISODate(sunday)) ?? [];
   assert("TEST 11 chemistry not split twice today", chemSessions.length <= 1, `${chemSessions.length} chem sessions`);
   assert(
-    "TEST 12 no 7am homework",
-    allSessions.every((s) => (s.startMin ?? 0) >= 8 * 60),
+    "TEST 12 no work before 9am weekend",
+    allSessions.every((s) => (s.startMin ?? 0) >= 9 * 60),
     allSessions.map((s) => `${s.title} ${s.startMin}`).join(","),
   );
   const smartCrowded = buildSmartSchedule(crowded, sunday);
@@ -260,11 +267,178 @@ assert(
   englishPlan.sessions.every((session) => (session.endMin ?? 0) <= 8 * 60 || session.dateKey !== toISODate(addDays(startOfDay(sunday), 1))),
 );
 
+const schoolTuesday = addDays(startOfDay(now), 1);
+const tueSessions = createTaskPlan(evenings.tasks[0], evenings, now).sessions.filter(
+  (s) => s.dateKey === toISODate(schoolTuesday),
+);
+assert(
+  "TEST 15 school-day work after 4pm",
+  tueSessions.every((s) => (s.startMin ?? 0) >= 16 * 60),
+  tueSessions.map((s) => String(s.startMin)).join(","),
+);
+
+const sundayCoach = getCoachDayPlan(crowded, sunday, sunday);
+const headerWork = sundayCoach.items.filter((i) => i.kind === "work").reduce((sum, i) => sum + i.minutes, 0);
+const headerFree = sundayCoach.items.filter((i) => i.kind === "free").reduce((sum, i) => sum + i.minutes, 0);
+assert("TEST 16 summary matches timeline work", sundayCoach.workMinutes === headerWork);
+assert("TEST 16 summary matches timeline free", sundayCoach.freeMinutes === headerFree);
+assert("TEST 16 dinner not counted as free", sundayCoach.items.filter((i) => i.kind === "personal").every((i) => i.title.includes("Dinner")));
+const isolated = sundayCoach.items.filter((item, index, list) => {
+  if (item.kind !== "break") return false;
+  return list[index - 1]?.kind !== "work" || list[index + 1]?.kind !== "work";
+});
+assert("TEST 17 no isolated breaks", isolated.length === 0, isolated.map((i) => `${i.startMin}`).join(","));
+assert("TEST 17 plan validates", validateDailyPlan(sundayCoach).length === 0, validateDailyPlan(sundayCoach).join("; "));
+
+const historyNow = combineDateAndTime(startOfDay(new Date("2026-09-13T10:00:00")), "10:00");
+const historyState = state({
+  events: [
+    {
+      id: "school",
+      title: "School",
+      category: "school",
+      startTime: "08:00",
+      endTime: "15:10",
+      daysOfWeek: [1, 2, 3, 4, 5],
+      travelMinutesBefore: 25,
+      travelMinutesAfter: 20,
+    },
+  ],
+  tasks: [
+    task({
+      id: "history-essay",
+      title: "History essay draft",
+      className: "US History",
+      type: "project",
+      dueAt: combineDateAndTime(addDays(startOfDay(historyNow), 4), "23:59").toISOString(),
+      estimatedMinutes: 240,
+      remainingMinutes: 240,
+      difficulty: "hard",
+      priority: "high",
+      canSplit: true,
+    }),
+  ],
+});
+const historyPlan = createTaskPlan(historyState.tasks[0], historyState, historyNow);
+const historyDuration = validateTaskPlannedDuration(240, historyPlan.sessions);
+assert("TEST 19 required equals scheduled", historyDuration.complete && historyDuration.remainingMinutes === 0, `scheduled=${historyDuration.scheduledMinutes} remaining=${historyDuration.remainingMinutes} track=${historyPlan.track}`);
+assert("TEST 19 not at risk when time exists", historyPlan.track === "on_track", historyPlan.track);
+assert("TEST 19 spreads across days", new Set(historyPlan.sessions.map((s) => s.dateKey)).size >= 3, historyPlan.sessions.map((s) => `${s.dateKey} ${s.minutes}`).join(" | "));
+assert(
+  "TEST 19 one session per day when possible",
+  [...new Set(historyPlan.sessions.map((s) => s.dateKey))].every(
+    (key) => historyPlan.sessions.filter((s) => s.dateKey === key).length === 1,
+  ),
+  historyPlan.sessions.map((s) => `${s.dateKey} ${s.minutes}`).join(" | "),
+);
+assert(
+  "TEST 19 uses round session lengths",
+  historyPlan.sessions.every((s) => [30, 45, 60, 75, 90].includes(s.minutes)),
+  historyPlan.sessions.map((s) => String(s.minutes)).join(","),
+);
+assert(
+  "TEST 19 keeps deadline day as buffer",
+  historyPlan.sessions.every((s) => s.dateKey !== toISODate(addDays(startOfDay(historyNow), 4))),
+  historyPlan.sessions.map((s) => s.dateKey).join(","),
+);
+assert(
+  "TEST 19 school-day work starts at 4pm when free",
+  historyPlan.sessions
+    .filter((s) => isAcademicSchoolDay(historyState, s.date))
+    .every((s) => s.startMin === 16 * 60),
+  historyPlan.sessions.map((s) => `${s.dateKey} ${s.startMin}`).join(" | "),
+);
+assert(
+  "TEST 19 no morning or pre-4pm school work",
+  historyPlan.sessions.every((session) => {
+    const school = isAcademicSchoolDay(historyState, session.date);
+    if (school) return (session.startMin ?? 0) >= 16 * 60;
+    return (session.startMin ?? 0) >= 9 * 60;
+  }),
+  historyPlan.sessions.map((s) => `${s.dateKey} ${s.startMin}-${s.endMin}`).join(" | "),
+);
+const mondayKey = toISODate(addDays(startOfDay(historyNow), 1));
+const mondayMinutes = historyPlan.sessions.filter((s) => s.dateKey === mondayKey).reduce((sum, s) => sum + s.minutes, 0);
+assert("TEST 19 does not dump most work on Monday", mondayMinutes <= 120, `monday=${mondayMinutes}`);
+
+const generated = buildSchedule({
+  tasks: historyState.tasks,
+  events: historyState.events,
+  preferences: historyState.preferences,
+  now: historyNow,
+});
+const genMinutes = generated.blocks.filter((b) => b.taskId === "history-essay").reduce((sum, b) => sum + b.minutes, 0);
+assert("TEST 19 generate-plan covers required minutes", genMinutes === 240 || generated.warnings.some((w) => w.taskId === "history-essay"), `gen=${genMinutes} warnings=${generated.warnings.map((w) => w.message).join(";")}`);
+assert(
+  "TEST 19 generate-plan honors start hours",
+  generated.blocks.every((block) => {
+    const start = new Date(block.start);
+    const startMin = start.getHours() * 60 + start.getMinutes();
+    return isAcademicSchoolDay(historyState, start) ? startMin >= 16 * 60 : startMin >= 9 * 60;
+  }),
+  generated.blocks.map((b) => b.start).join(","),
+);
+
+const emptyDay = getCoachDayPlan(state({ events: evenings.events, tasks: [] }), now, now);
+assert("TEST 18 no fake work", emptyDay.workMinutes === 0 && emptyDay.breakMinutes === 0);
+
+const leftoverStatus = classifyTaskTrack({
+  hoursUntilDue: 80,
+  remainingMinutes: 6,
+  availableMinutesBeforeDeadline: 18 * 60 + 48,
+});
+assert("TEST 20 leftover work is not at risk", leftoverStatus.track !== "at_risk" && leftoverStatus.shortfallMinutes === 0, leftoverStatus.track);
+assert("TEST 20 shortfall formula", shortfallMinutes(6, 1128) === 0);
+assert("TEST 20 genuine shortfall", shortfallMinutes(180, 90) === 90);
+
+const packedPlan = createTaskPlan(tight.tasks[0], tight, now);
+assert("TEST 21 insufficient capacity is at risk", packedPlan.track === "at_risk" && packedPlan.shortBy > 0, `track=${packedPlan.track} shortBy=${packedPlan.shortBy}`);
+
+const overdueState = state({
+  tasks: [
+    task({
+      id: "late",
+      title: "Late lab",
+      dueAt: combineDateAndTime(addDays(startOfDay(now), -1), "21:00").toISOString(),
+      remainingMinutes: 40,
+      estimatedMinutes: 40,
+    }),
+  ],
+});
+assert("TEST 22 overdue", createTaskPlan(overdueState.tasks[0], overdueState, now).track === "overdue");
+
+const exact = state({
+  events: evenings.events,
+  tasks: [
+    task({
+      id: "exact-hw",
+      title: "Exact homework",
+      dueAt: dueIn(2, "21:00"),
+      remainingMinutes: 45,
+      estimatedMinutes: 45,
+    }),
+  ],
+});
+const exactPlan = createTaskPlan(exact.tasks[0], exact, now);
+assert(
+  "TEST 23 exactly enough is on track",
+  exactPlan.track === "on_track" && exactPlan.remaining === 0 && exactPlan.shortBy === 0,
+  `track=${exactPlan.track} remaining=${exactPlan.remaining} planned=${exactPlan.planned} shortBy=${exactPlan.shortBy}`,
+);
+
+const needsPlanning = classifyTaskTrack({
+  hoursUntilDue: 72,
+  remainingMinutes: 45,
+  availableMinutesBeforeDeadline: 400,
+});
+assert("TEST 24 remaining with capacity needs planning", needsPlanning.track === "needs_planning" && needsPlanning.shortfallMinutes === 0);
+
 if (failures.length) {
   console.error(failures.join("\n"));
   process.exit(1);
 }
 console.log("All 8 planning scenarios passed.");
 console.log(`TEST 1 sessions: ${spread.sessions.map((s) => `${s.dateKey} ${s.label}`).join(" | ")}`);
+console.log(`TEST 19 history: ${historyPlan.sessions.map((s) => `${s.dateKey} ${s.label}`).join(" | ")}`);
 console.log(`TEST 4 headline: ${action?.headline}`);
 console.log(`Today ${toISODate(now)} first free after basketball at ${free[0]?.startMin}`);

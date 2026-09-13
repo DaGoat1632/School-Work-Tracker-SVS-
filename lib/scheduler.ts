@@ -1,10 +1,12 @@
 import type {
+  AppState,
   FixedEvent,
   Preferences,
   ScheduledBlock,
   Task,
   Warning,
 } from "./types";
+import { recommendWindow } from "./planning";
 import {
   addDays,
   addMinutes,
@@ -22,6 +24,9 @@ import {
 type Interval = { start: number; end: number };
 
 const MIN_BLOCK = 15;
+const MIN_WORK = 30;
+const PERSONAL_START = 17 * 60;
+const PERSONAL_END = 18 * 60;
 /** Cover through next month so sidebar month view can show scheduled work. */
 export const HORIZON_DAYS = 62;
 
@@ -103,15 +108,17 @@ function subtractBusy(window: Interval, busy: Interval[]): Interval[] {
   return free.filter((slot) => slot.end - slot.start >= MIN_BLOCK);
 }
 
-function workWindow(prefs: Preferences): Interval {
-  const start = minutesFromMidnight(prefs.wakeTime);
-  const sleep = minutesFromMidnight(prefs.sleepTime);
-  const cutoff = minutesFromMidnight(prefs.noWorkAfter);
-  const end = Math.min(
-    sleep > start ? sleep : 24 * 60,
-    cutoff > start ? cutoff : 24 * 60,
-  );
-  return { start, end: Math.max(start + MIN_BLOCK, end) };
+function emptyPlannerState(prefs: Preferences, events: FixedEvent[]): AppState {
+  return {
+    preferences: prefs,
+    events,
+    tasks: [],
+    blocks: [],
+    warnings: [],
+    lastPlannedAt: null,
+    planReady: false,
+    dismissedNotificationIds: [],
+  };
 }
 
 function dailyCap(prefs: Preferences, day: Date): number {
@@ -145,7 +152,7 @@ export function buildSchedule(input: {
   const kept = (input.keptBlocks ?? []).filter(
     (block) => block.status === "done" || block.status === "partial",
   );
-  const window = workWindow(prefs);
+  const plannerState = emptyPlannerState(prefs, input.events);
 
   const openTasks = input.tasks
     .filter((task) => !task.completed && task.remainingMinutes > 0)
@@ -165,7 +172,9 @@ export function buildSchedule(input: {
   for (let i = 0; i < HORIZON_DAYS; i += 1) {
     const day = addDays(today, i);
     const key = toISODate(day);
+    const rec = recommendWindow(plannerState, day);
     const busy = busyIntervals(input.events, day);
+    busy.push({ start: PERSONAL_START, end: PERSONAL_END });
     for (const block of kept) {
       const start = new Date(block.start);
       if (sameDay(start, day)) {
@@ -182,45 +191,41 @@ export function buildSchedule(input: {
       const nowMinutes = now.getHours() * 60 + now.getMinutes();
       busy.push({ start: 0, end: nowMinutes });
     }
-    slotsByDay.set(key, subtractBusy(window, busy));
+    slotsByDay.set(key, subtractBusy({ start: rec.start, end: rec.end }, busy));
     if (!usedByDay.has(key)) usedByDay.set(key, 0);
   }
 
-  function placeChunk(
-    task: Task,
-    day: Date,
-    minutes: number,
-    preferEarlierHard: boolean,
-  ): boolean {
+  function minutesOnDay(taskId: string, key: string): number {
+    return generated
+      .filter((block) => block.taskId === taskId && toISODate(new Date(block.start)) === key)
+      .reduce((sum, block) => sum + block.minutes, 0);
+  }
+
+  function placeChunk(task: Task, day: Date, minutes: number, taskDayCap: number): boolean {
     const key = toISODate(day);
+    const rec = recommendWindow(plannerState, day);
+    const due = new Date(task.dueAt);
+    const dueEnd = sameDay(due, day) ? due.getHours() * 60 + due.getMinutes() : 24 * 60;
+    if (dueEnd <= rec.start) return false;
     const slots = slotsByDay.get(key);
     if (!slots || slots.length === 0) return false;
     const used = usedByDay.get(key) ?? 0;
-    const leftoverCap = dailyCap(prefs, day) - used;
+    const leftoverCap = Math.min(dailyCap(prefs, day) - used, taskDayCap - minutesOnDay(task.id, key));
     if (leftoverCap < MIN_BLOCK) return false;
 
     const take = Math.min(minutes, leftoverCap);
-    if (take < MIN_BLOCK && minutes > take) return false;
+    if (take < MIN_WORK && minutes > take) return false;
 
-    const search =
-      preferEarlierHard && task.difficulty === "easy"
-        ? [...slots.keys()].reverse()
-        : [...slots.keys()];
-
-    for (const slotIndex of search) {
+    for (const slotIndex of slots.keys()) {
       const slot = slots[slotIndex];
       const available = slot.end - slot.start;
-      const chunk = Math.min(
-        take,
-        available,
-        task.canSplit ? prefs.workBlockMinutes : minutes,
-      );
+      const chunk = Math.min(take, available);
       if (!task.canSplit && chunk < minutes) continue;
-      if (chunk < MIN_BLOCK && minutes > chunk) continue;
+      if (chunk < MIN_WORK && minutes > chunk) continue;
       if (chunk <= 0) continue;
 
       const start = addMinutes(combineDateAndTime(day, "00:00"), slot.start);
-      if (start.getTime() + chunk * 60_000 > new Date(task.dueAt).getTime()) {
+      if (start.getTime() + chunk * 60_000 > due.getTime()) {
         continue;
       }
 
@@ -251,23 +256,45 @@ export function buildSchedule(input: {
         Math.round((dueDay.getTime() - today.getTime()) / 86_400_000),
       ),
     );
+    const large =
+      task.type === "project" ||
+      task.type === "test" ||
+      task.type === "quiz" ||
+      task.remainingMinutes >= 90;
+    const taskDayCap = large ? 120 : dailyCap(prefs, addDays(today, 0));
+    const sessionLen = task.type === "test" || task.type === "quiz" ? 45 : 60;
+    const spreadEnd =
+      large && lastDayIndex >= 2 ? Math.max(0, lastDayIndex - 1) : lastDayIndex;
+
+    const wantChunk = (left: number) => {
+      if (!task.canSplit) return left;
+      if (left <= sessionLen) return left;
+      return sessionLen;
+    };
+
+    const runPass = (endIndex: number, allowSecond: boolean) => {
+      let any = false;
+      for (let i = 0; i <= endIndex; i += 1) {
+        const left = remainingByTask.get(task.id) ?? 0;
+        if (left <= 0) break;
+        const day = addDays(today, i);
+        const key = toISODate(day);
+        const already = minutesOnDay(task.id, key);
+        if (!allowSecond && already > 0) continue;
+        if (already >= taskDayCap) continue;
+        if (placeChunk(task, day, wantChunk(left), taskDayCap)) any = true;
+      }
+      return any;
+    };
 
     let guard = 0;
     while ((remainingByTask.get(task.id) ?? 0) > 0 && guard < 80) {
       guard += 1;
-      const left = remainingByTask.get(task.id) ?? 0;
-      let placed = false;
-      for (let i = 0; i <= lastDayIndex; i += 1) {
-        const day = addDays(today, i);
-        const want = task.canSplit
-          ? Math.min(left, prefs.workBlockMinutes)
-          : left;
-        if (placeChunk(task, day, want, true)) {
-          placed = true;
-          break;
-        }
-      }
-      if (!placed) break;
+      if (runPass(spreadEnd, false)) continue;
+      if (runPass(spreadEnd, true)) continue;
+      if (spreadEnd < lastDayIndex && runPass(lastDayIndex, false)) continue;
+      if (spreadEnd < lastDayIndex && runPass(lastDayIndex, true)) continue;
+      break;
     }
   }
 

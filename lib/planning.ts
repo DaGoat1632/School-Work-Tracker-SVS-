@@ -107,7 +107,7 @@ export type BreakBlock = {
 };
 
 export type CoachItem = {
-  kind: "work" | "break" | "free";
+  kind: "work" | "break" | "free" | "personal";
   startMin: number;
   endMin: number;
   minutes: number;
@@ -117,17 +117,32 @@ export type CoachItem = {
   period?: string;
 };
 
+export type DailySummary = {
+  windowStart: number;
+  windowEnd: number;
+  windowMinutes: number;
+  eventMinutes: number;
+  workMinutes: number;
+  breakMinutes: number;
+  personalMinutes: number;
+  freeMinutes: number;
+};
+
 export type CoachDayPlan = {
   date: Date;
   dateKey: string;
   workMinutes: number;
   breakMinutes: number;
   freeMinutes: number;
+  personalMinutes: number;
+  eventMinutes: number;
+  windowMinutes: number;
   urgentCount: number;
   testCount: number;
   items: CoachItem[];
   headline: string;
   leftover: CoachItem | null;
+  summary: DailySummary;
 };
 
 export type SmartSchedule = {
@@ -296,19 +311,29 @@ function schoolDayEnd(state: AppState, day: Date): number | null {
 }
 
 /** Hours we are willing to recommend work — not the same as "awake and uncommitted." */
+export function isAcademicSchoolDay(state: AppState, day: Date): boolean {
+  return schoolDayEnd(state, day) != null;
+}
+
 export function recommendWindow(
   state: AppState,
   day: Date,
 ): { start: number; end: number } {
-  const wake = minutesFromMidnight(state.preferences.wakeTime);
-  const latest = workWindow(state).end;
-  const end = Math.min(latest, 21 * 60);
+  const latest = Math.min(workWindow(state).end, 21 * 60);
   const schoolEnd = schoolDayEnd(state, day);
-  let start = wake;
-  if (schoolEnd != null) start = Math.max(wake, schoolEnd, 15 * 60 + 30);
-  else if (isWeekend(day)) start = Math.max(wake, 8 * 60);
-  else start = Math.max(wake, 15 * 60 + 30);
-  return { start, end: Math.max(start + 20, end) };
+  const start =
+    schoolEnd != null
+      ? Math.max(16 * 60, schoolEnd)
+      : 9 * 60;
+  return { start, end: Math.max(start + 20, latest) };
+}
+
+export function getAvailableTimeBlocks(
+  state: AppState,
+  day: Date,
+  options?: { includeWorkBlocks?: boolean; now?: Date },
+): FreeSlot[] {
+  return calculateFreeTime(state, day, options);
 }
 
 export function calculateFreeTime(
@@ -519,7 +544,10 @@ export function scheduleRank(task: Task, now = new Date()): number {
   return 7;
 }
 
-const MIN_WORK = 20;
+const MIN_WORK = 30;
+const MIN_FINISH = 15;
+const PERSONAL_START = 17 * 60;
+const PERSONAL_END = 18 * 60;
 
 function daysUntilDue(task: Task, now: Date): number {
   return Math.round(
@@ -527,8 +555,47 @@ function daysUntilDue(task: Task, now: Date): number {
   );
 }
 
+const NICE_SESSION_LENGTHS = [30, 45, 60, 75, 90];
+
 function isStudyTask(task: Task): boolean {
   return task.type === "test" || task.type === "quiz";
+}
+
+function isLargeTask(task: Task, needed: number): boolean {
+  return isStudyTask(task) || task.type === "project" || needed >= 90;
+}
+
+function snapNiceSession(minutes: number): number {
+  let best = NICE_SESSION_LENGTHS[0];
+  let dist = Math.abs(best - minutes);
+  for (const option of NICE_SESSION_LENGTHS) {
+    const gap = Math.abs(option - minutes);
+    if (gap < dist || (gap === dist && option >= minutes)) {
+      best = option;
+      dist = gap;
+    }
+  }
+  return best;
+}
+
+function chooseSessionTake(left: number, room: number, target: number, cap: number): number {
+  const maxTake = Math.min(left, room, cap);
+  if (maxTake < MIN_FINISH) return 0;
+  if (left <= maxTake && left < MIN_WORK) return left;
+  const nice = NICE_SESSION_LENGTHS.filter((size) => size <= maxTake && size <= left);
+  if (target <= maxTake && target <= left && NICE_SESSION_LENGTHS.includes(target)) {
+    const leftover = left - target;
+    if (leftover > 0 && leftover < MIN_FINISH && leftover <= maxTake - target) return target + leftover;
+    return target;
+  }
+  if (nice.length > 0) {
+    nice.sort((a, b) => Math.abs(a - target) - Math.abs(b - target) || b - a);
+    const pick = nice[0];
+    const leftover = left - pick;
+    if (leftover > 0 && leftover < MIN_FINISH && leftover <= maxTake - pick) return pick + leftover;
+    return pick;
+  }
+  return maxTake;
 }
 
 function dailyShare(task: Task, now: Date, needed: number): number {
@@ -536,15 +603,18 @@ function dailyShare(task: Task, now: Date, needed: number): number {
   const dueSoon = daysUntilDue(task, now) <= 1;
   if (dueSoon && !isStudyTask(task)) return needed;
   if (isStudyTask(task)) {
-    const pieces = Math.min(Math.max(days - (dueSoon ? 0 : 1), 1), 4);
-    return Math.max(MIN_WORK, Math.min(45, Math.ceil(needed / pieces)));
+    const pieces = Math.min(Math.max(days - (daysUntilDue(task, now) >= 2 ? 1 : 0), 2), 4);
+    return Math.max(MIN_WORK, Math.min(45, snapNiceSession(needed / pieces)));
   }
-  if (task.type === "project" || needed >= 90) {
-    const pieces = Math.min(days, 5);
-    return Math.max(30, Math.min(50, Math.ceil(needed / pieces)));
+  if (isLargeTask(task, needed)) {
+    const buffer = daysUntilDue(task, now) >= 2 ? 1 : 0;
+    const usable = Math.max(1, days - buffer);
+    const target = 60;
+    const pieces = Math.min(usable, Math.max(1, Math.ceil(needed / target)));
+    return Math.max(MIN_WORK, Math.min(90, snapNiceSession(needed / pieces)));
   }
   if (needed <= 60) return needed;
-  return Math.max(MIN_WORK, Math.min(50, Math.ceil(needed / Math.min(days, 3))));
+  return Math.max(MIN_WORK, Math.min(60, snapNiceSession(needed / Math.min(days, 3))));
 }
 
 function dayWorkLimit(state: AppState, day: Date, urgent: boolean): number {
@@ -582,15 +652,18 @@ function placementInSpan(
   takeMax: number,
   minStart: number,
   maxEnd: number,
+  schoolDay: boolean,
 ): OpenSpan | null {
   const startBound = Math.max(span.startMin, minStart);
   const endBound = Math.min(span.endMin, maxEnd);
   const room = endBound - startBound;
-  if (room < MIN_WORK && room < takeMax) return null;
+  if (room < MIN_FINISH) return null;
   const take = Math.min(takeMax, room);
-  if (take < MIN_WORK && take < takeMax) return null;
-  if (take < 15) return null;
-  const preferred = [18 * 60, 15 * 60 + 30, 12 * 60, startBound];
+  if (take < MIN_FINISH) return null;
+  if (take < MIN_WORK && take !== takeMax && take < takeMax) return null;
+  const preferred = schoolDay
+    ? [16 * 60, 16 * 60 + 70, 18 * 60, startBound]
+    : [9 * 60, 10 * 60, 11 * 60, 18 * 60, startBound];
   for (const candidate of preferred) {
     const start = Math.max(startBound, candidate);
     if (start + take <= endBound) return { startMin: start, endMin: start + take };
@@ -601,11 +674,15 @@ function placementInSpan(
   return null;
 }
 
-function spanScore(startMin: number): number {
-  if (startMin >= 18 * 60 && startMin < 21 * 60) return 80;
-  if (startMin >= 15 * 60 + 30) return 60;
-  if (startMin >= 12 * 60) return 25;
-  if (startMin >= 8 * 60) return 8;
+function spanScore(startMin: number, schoolDay: boolean): number {
+  if (schoolDay && startMin < 16 * 60) return -40;
+  if (!schoolDay && startMin < 9 * 60) return -40;
+  if (startMin >= PERSONAL_START && startMin < PERSONAL_END) return -10;
+  if (schoolDay && startMin >= 16 * 60 && startMin < 17 * 60) return 90;
+  if (!schoolDay && startMin >= 9 * 60 && startMin < 12 * 60) return 90;
+  if (startMin >= 18 * 60 && startMin < 21 * 60) return 70;
+  if (startMin >= 16 * 60) return 80;
+  if (startMin >= 12 * 60) return 40;
   return -30;
 }
 
@@ -614,12 +691,29 @@ function takeFromDay(
   takeMax: number,
   minStart: number,
   maxEnd: number,
+  schoolDay: boolean,
+  preferStart?: number,
+  allowShortFinish = false,
 ): { booked: OpenSpan; next: OpenSpan[] } | null {
+  const minTake = allowShortFinish ? MIN_FINISH : MIN_WORK;
+  if (preferStart != null && preferStart >= minStart) {
+    for (const span of spans) {
+      const start = Math.max(span.startMin, minStart, preferStart);
+      const end = Math.min(span.endMin, maxEnd);
+      const take = Math.min(takeMax, end - start);
+      if (take >= minTake && start + take <= end) {
+        const booked = { startMin: start, endMin: start + take };
+        return { booked, next: subtractBooked(spans, booked) };
+      }
+    }
+  }
   let best: { booked: OpenSpan; score: number } | null = null;
   for (const span of spans) {
-    const booked = placementInSpan(span, takeMax, minStart, maxEnd);
+    const booked = placementInSpan(span, takeMax, minStart, maxEnd, schoolDay);
     if (!booked) continue;
-    const score = spanScore(booked.startMin) + Math.min(20, (span.endMin - span.startMin) / 15);
+    if (booked.endMin - booked.startMin < minTake && !allowShortFinish) continue;
+    const score =
+      spanScore(booked.startMin, schoolDay) + Math.min(20, (span.endMin - span.startMin) / 15);
     if (!best || score > best.score) best = { booked, score };
   }
   if (!best) return null;
@@ -634,6 +728,44 @@ function sessionOverlaps(a: SessionSuggestion, b: SessionSuggestion): boolean {
   return a.startMin < b.endMin && b.startMin < a.endMin;
 }
 
+export function validateTaskPlannedDuration(
+  requiredMinutes: number,
+  sessions: SessionSuggestion[],
+): { requiredMinutes: number; scheduledMinutes: number; remainingMinutes: number; complete: boolean } {
+  const scheduledMinutes = sessions.reduce((sum, session) => sum + session.minutes, 0);
+  const remainingMinutes = Math.max(0, requiredMinutes - scheduledMinutes);
+  return {
+    requiredMinutes,
+    scheduledMinutes,
+    remainingMinutes,
+    complete: remainingMinutes === 0,
+  };
+}
+
+export function shortfallMinutes(
+  remainingMinutes: number,
+  availableMinutesBeforeDeadline: number,
+): number {
+  return Math.max(0, remainingMinutes - Math.max(0, availableMinutesBeforeDeadline));
+}
+
+export function classifyTaskTrack(input: {
+  hoursUntilDue: number;
+  remainingMinutes: number;
+  availableMinutesBeforeDeadline: number;
+}): { track: TrackState; shortfallMinutes: number } {
+  const remaining = Math.max(0, input.remainingMinutes);
+  const available = Math.max(0, input.availableMinutesBeforeDeadline);
+  const shortfall = shortfallMinutes(remaining, available);
+  if (input.hoursUntilDue < 0 && remaining > 0) {
+    return { track: "overdue", shortfallMinutes: Math.max(shortfall, remaining) };
+  }
+  if (remaining <= 0) return { track: "on_track", shortfallMinutes: 0 };
+  if (shortfall > 0) return { track: "at_risk", shortfallMinutes: shortfall };
+  if (remaining >= MIN_FINISH) return { track: "needs_planning", shortfallMinutes: 0 };
+  return { track: "on_track", shortfallMinutes: 0 };
+}
+
 export function validateRecommendedSessions(
   sessions: SessionSuggestion[],
   state: AppState,
@@ -645,6 +777,8 @@ export function validateRecommendedSessions(
     if (session.startMin == null || session.endMin == null) continue;
     if (session.endMin - session.startMin < 15) continue;
     if (session.endMin - session.startMin !== session.minutes) continue;
+    const window = recommendWindow(state, session.date);
+    if (session.startMin < window.start || session.endMin > window.end) continue;
     const task = tasks.find((item) => item.id === session.taskId);
     if (!task || task.completed || workLeft(task) <= 0) continue;
     const cutoff = dueCutoffMin(task, session.date);
@@ -679,13 +813,158 @@ export function validateRecommendedSessions(
   return valid;
 }
 
+function relabel(session: SessionSuggestion, task: Task, isLast: boolean) {
+  if (session.startMin == null || session.endMin == null) return;
+  session.minutes = session.endMin - session.startMin;
+  session.label = `${clockRange(session.startMin, session.endMin)} — ${chunkLabel(task, session.minutes, isLast)}`;
+}
+
+function growSessionIntoSpans(
+  session: SessionSuggestion,
+  extra: number,
+  spans: OpenSpan[],
+  minStart: number,
+  maxEnd: number,
+): { grown: number; booked: OpenSpan } | null {
+  if (extra <= 0 || session.startMin == null || session.endMin == null) return null;
+  for (const span of spans) {
+    const startBound = Math.max(span.startMin, minStart);
+    const endBound = Math.min(span.endMin, maxEnd);
+    if (session.endMin >= startBound && session.endMin < endBound) {
+      const grown = Math.min(extra, endBound - session.endMin);
+      if (grown > 0) {
+        return {
+          grown,
+          booked: { startMin: session.endMin, endMin: session.endMin + grown },
+        };
+      }
+    }
+  }
+  for (const span of spans) {
+    const startBound = Math.max(span.startMin, minStart);
+    const endBound = Math.min(span.endMin, maxEnd);
+    if (session.startMin > startBound && session.startMin <= endBound) {
+      const grown = Math.min(extra, session.startMin - startBound);
+      if (grown > 0) {
+        return {
+          grown,
+          booked: { startMin: session.startMin - grown, endMin: session.startMin },
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function absorbRemainingIntoSessions(
+  leftover: number,
+  sessions: SessionSuggestion[],
+  availability: Map<string, OpenSpan[]>,
+  task: Task,
+  state: AppState,
+  now: Date,
+  workToday: Map<string, number>,
+): number {
+  let left = leftover;
+  if (left <= 0 || sessions.length === 0) return left;
+  const todayKey = toISODate(now);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const ordered = [...sessions].sort((a, b) => {
+    if (a.dateKey !== b.dateKey) return a.dateKey < b.dateKey ? 1 : -1;
+    return (b.endMin ?? 0) - (a.endMin ?? 0);
+  });
+  for (const session of ordered) {
+    if (left <= 0) break;
+    if (session.startMin == null || session.endMin == null) continue;
+    const window = recommendWindow(state, session.date);
+    const dueEnd = dueCutoffMin(task, session.date);
+    const minStart =
+      session.dateKey === todayKey ? Math.max(window.start, nowMin) : window.start;
+    const maxEnd = Math.min(window.end, dueEnd);
+    const spans = availability.get(session.dateKey) ?? [];
+    const grown = growSessionIntoSpans(session, left, spans, minStart, maxEnd);
+    if (!grown) continue;
+    if (grown.booked.startMin < session.startMin) session.startMin = grown.booked.startMin;
+    if (grown.booked.endMin > session.endMin) session.endMin = grown.booked.endMin;
+    availability.set(session.dateKey, subtractBooked(spans, grown.booked));
+    left -= grown.grown;
+    workToday.set(session.dateKey, (workToday.get(session.dateKey) ?? 0) + grown.grown);
+    relabel(session, task, left === 0);
+  }
+  return left;
+}
+
+function insertBreaksBetweenWork(
+  plans: TaskPlan[],
+  state: AppState,
+  now: Date,
+  prefBreak: number,
+): BreakBlock[] {
+  const breaks: BreakBlock[] = [];
+  const byDay = new Map<string, SessionSuggestion[]>();
+  for (const plan of plans) {
+    for (const session of plan.sessions) {
+      if (session.startMin == null || session.endMin == null) continue;
+      const list = byDay.get(session.dateKey) ?? [];
+      list.push(session);
+      byDay.set(session.dateKey, list);
+    }
+  }
+
+  for (const [dateKey, list] of byDay) {
+    list.sort((a, b) => (a.startMin ?? 0) - (b.startMin ?? 0));
+    const day = list[0]?.date;
+    if (!day) continue;
+    const window = recommendWindow(state, day);
+    let focused = 0;
+    for (let i = 0; i < list.length - 1; i += 1) {
+      const current = list[i];
+      const next = list[i + 1];
+      if (current.endMin == null || next.startMin == null) continue;
+      const need = breakAfter(current.minutes, focused, prefBreak);
+      focused += current.minutes;
+      if (need < 5) continue;
+      if (next.startMin !== current.endMin) continue;
+      const later = list.slice(i + 1);
+      const last = later[later.length - 1];
+      if (last.endMin == null) continue;
+      const shiftedEnd = last.endMin + need;
+      if (shiftedEnd > window.end) continue;
+      const original = calculateFreeTime(state, day, { now });
+      const fits = original.some(
+        (slot) => current.endMin! >= slot.startMin && shiftedEnd <= slot.endMin,
+      );
+      if (!fits) continue;
+      if (next.startMin < current.endMin) continue;
+      for (const session of later) {
+        if (session.startMin == null || session.endMin == null) continue;
+        session.startMin += need;
+        session.endMin += need;
+        const task = state.tasks.find((item) => item.id === session.taskId);
+        if (task) relabel(session, task, false);
+      }
+      breaks.push({
+        date: day,
+        dateKey,
+        startMin: current.endMin,
+        endMin: current.endMin + need,
+        minutes: need,
+        label:
+          focused >= 90
+            ? `☕ ${need}-minute break · stretch / grab water`
+            : `☕ ${need}-minute break`,
+      });
+    }
+  }
+  return breaks;
+}
+
 export function buildSmartSchedule(state: AppState, now = new Date()): SmartSchedule {
   const today = startOfDay(now);
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const prefBreak = Math.max(0, state.preferences.breakMinutes || 10);
   const availability = new Map<string, OpenSpan[]>();
   const workToday = new Map<string, number>();
-  const focusedToday = new Map<string, number>();
   const urgentSoon = state.tasks.some(
     (task) => !task.completed && neededMinutes(task) > 0 && daysUntilDue(task, now) <= 1,
   );
@@ -695,10 +974,13 @@ export function buildSmartSchedule(state: AppState, now = new Date()): SmartSche
     const window = recommendWindow(state, day);
     availability.set(
       toISODate(day),
-      calculateFreeTime(state, day, { now })
-        .map((slot) => ({ startMin: slot.startMin, endMin: slot.endMin }))
-        .map((span) => clipSpan(span, window.start, window.end))
-        .filter((span): span is OpenSpan => Boolean(span)),
+      subtractBooked(
+        calculateFreeTime(state, day, { now })
+          .map((slot) => ({ startMin: slot.startMin, endMin: slot.endMin }))
+          .map((span) => clipSpan(span, window.start, window.end))
+          .filter((span): span is OpenSpan => Boolean(span)),
+        { startMin: PERSONAL_START, endMin: PERSONAL_END },
+      ),
     );
   }
 
@@ -713,7 +995,6 @@ export function buildSmartSchedule(state: AppState, now = new Date()): SmartSche
     });
 
   const plans: TaskPlan[] = [];
-  const breaks: BreakBlock[] = [];
   const placed: SessionSuggestion[] = [];
 
   for (const task of ranked) {
@@ -730,11 +1011,7 @@ export function buildSmartSchedule(state: AppState, now = new Date()): SmartSche
       if (day > lastDay) break;
       const window = recommendWindow(state, day);
       const dueEnd = dueCutoffMin(task, day);
-      const relax =
-        daysUntilDue(task, now) <= 1 && dueEnd <= window.start
-          ? minutesFromMidnight(state.preferences.wakeTime)
-          : window.start;
-      const minStart = toISODate(day) === toISODate(today) ? Math.max(relax, nowMin) : relax;
+      const minStart = toISODate(day) === toISODate(today) ? Math.max(window.start, nowMin) : window.start;
       availableBeforeDeadline += spanMinutes(
         availability.get(toISODate(day)) ?? [],
         minStart,
@@ -744,49 +1021,80 @@ export function buildSmartSchedule(state: AppState, now = new Date()): SmartSche
 
     let left = needed;
     const sessions: SessionSuggestion[] = [];
+    const large = isLargeTask(task, needed);
+    const sessionCap = study ? Math.min(blockPref, 45) : 90;
+    const gap = Math.max(prefBreak, 10);
+    const useBuffer = large && daysUntilDue(task, now) >= 2;
+    const spreadUntil = useBuffer ? addDays(lastDay, -1) : lastDay;
+    const lastSpread = spreadUntil < today ? lastDay : spreadUntil;
 
-    const placeOnDay = (day: Date, relaxMorning: boolean) => {
-      if (left < 15) return;
+    const longestRoom = (dateKey: string, minStart: number, maxEnd: number) => {
+      let best = 0;
+      for (const span of availability.get(dateKey) ?? []) {
+        const clipped = clipSpan(span, minStart, maxEnd);
+        if (clipped) best = Math.max(best, clipped.endMin - clipped.startMin);
+      }
+      return best;
+    };
+
+    const placeOnDay = (day: Date, mode: "spread" | "fill" | "double") => {
+      if (left < MIN_FINISH) return false;
       const dateKey = toISODate(day);
       const window = recommendWindow(state, day);
       const dueEnd = dueCutoffMin(task, day);
-      if (dueEnd <= window.start && !relaxMorning) return;
-      const startFloor = relaxMorning
-        ? minutesFromMidnight(state.preferences.wakeTime)
-        : window.start;
-      const minStart = dateKey === toISODate(today) ? Math.max(startFloor, nowMin) : startFloor;
+      if (dueEnd <= window.start) return false;
+      const schoolDay = isAcademicSchoolDay(state, day);
+      const minStart = dateKey === toISODate(today) ? Math.max(window.start, nowMin) : window.start;
       const maxEnd = Math.min(window.end, dueEnd);
-      const limit = dayWorkLimit(state, day, urgentSoon || daysUntilDue(task, now) <= 1);
+      if (maxEnd - minStart < MIN_FINISH) return false;
+      const limit = Math.min(
+        dayWorkLimit(state, day, urgentSoon || daysUntilDue(task, now) <= 1),
+        large ? 120 : 180,
+      );
       let usedDay = workToday.get(dateKey) ?? 0;
       const alreadyForTask = sessions.filter((session) => session.dateKey === dateKey).length;
-      const maxSessionsToday = study && daysUntilDue(task, now) <= 1 ? 2 : 1;
-      if (alreadyForTask >= maxSessionsToday) return;
-      if (usedDay >= limit) return;
+      if (mode !== "double" && alreadyForTask >= 1) return false;
+      if (alreadyForTask >= 2) return false;
+      if (usedDay >= limit) return false;
 
-      let takeMax = Math.min(
-        left,
-        share,
-        study
-          ? Math.min(blockPref, 45)
-          : !study && (task.canSplit === false || needed <= 60)
+      const finishing = left < MIN_WORK;
+      const room = longestRoom(dateKey, minStart, maxEnd);
+      const usable = Math.min(room, Math.max(0, limit - usedDay));
+      const takeMax =
+        task.canSplit === false
+          ? left <= usable
             ? left
-            : share,
-        Math.max(0, limit - usedDay),
-      );
-      if (takeMax < MIN_WORK) {
-        if (left >= 15 && left <= MIN_WORK) takeMax = left;
-        else return;
-      }
+            : 0
+          : chooseSessionTake(
+              left,
+              usable,
+              finishing ? left : share,
+              finishing ? left : sessionCap,
+            );
+      if (takeMax < MIN_WORK && !(finishing && takeMax >= MIN_FINISH)) return false;
+      if (takeMax <= 0) return false;
 
-      const taken = takeFromDay(availability.get(dateKey) ?? [], takeMax, minStart, maxEnd);
-      if (!taken) return;
+      const own = sessions
+        .filter((session) => session.dateKey === dateKey && session.endMin != null)
+        .sort((a, b) => (a.startMin ?? 0) - (b.startMin ?? 0));
+      const preferStart = own.length ? own[own.length - 1].endMin! + gap : undefined;
+      const taken = takeFromDay(
+        availability.get(dateKey) ?? [],
+        takeMax,
+        minStart,
+        maxEnd,
+        schoolDay,
+        preferStart,
+        finishing,
+      );
+      if (!taken) return false;
       const minutes = taken.booked.endMin - taken.booked.startMin;
-      if (minutes < 15) return;
+      if (minutes < MIN_WORK && !finishing) return false;
+      if (minutes < MIN_FINISH) return false;
       availability.set(dateKey, taken.next);
       left -= minutes;
       usedDay += minutes;
       workToday.set(dateKey, usedDay);
-      focusedToday.set(dateKey, (focusedToday.get(dateKey) ?? 0) + minutes);
       sessions.push({
         taskId: task.id,
         title: task.title,
@@ -797,46 +1105,35 @@ export function buildSmartSchedule(state: AppState, now = new Date()): SmartSche
         endMin: taken.booked.endMin,
         label: `${clockRange(taken.booked.startMin, taken.booked.endMin)} — ${chunkLabel(task, minutes, left === 0)}`,
       });
+      return true;
+    };
 
-      const gap = breakAfter(minutes, focusedToday.get(dateKey) ?? 0, prefBreak);
-      const breakBooked = {
-        startMin: taken.booked.endMin,
-        endMin: taken.booked.endMin + gap,
-      };
-      const remainingSpans = availability.get(dateKey) ?? [];
-      const canBreak =
-        gap >= 5 &&
-        breakBooked.endMin <= maxEnd &&
-        remainingSpans.some(
-          (span) => span.startMin <= breakBooked.startMin && span.endMin >= breakBooked.endMin,
-        );
-      if (canBreak) {
-        availability.set(dateKey, subtractBooked(remainingSpans, breakBooked));
-        breaks.push({
-          date: day,
-          dateKey,
-          startMin: breakBooked.startMin,
-          endMin: breakBooked.endMin,
-          minutes: gap,
-          label:
-            (focusedToday.get(dateKey) ?? 0) >= 90
-              ? `☕ ${gap}-minute break · stretch / grab water`
-              : `☕ ${gap}-minute break`,
-        });
+    const walkDays = (until: Date, mode: "spread" | "fill" | "double") => {
+      for (let offset = 0; offset <= 14 && left >= MIN_FINISH; offset += 1) {
+        const day = addDays(today, offset);
+        if (day > until) break;
+        placeOnDay(day, mode);
       }
     };
 
-    for (let offset = 0; offset <= 14 && left >= 15; offset += 1) {
-      const day = addDays(today, offset);
-      if (day > lastDay) break;
-      placeOnDay(day, false);
+    walkDays(lastSpread, "spread");
+    walkDays(lastSpread, "fill");
+    let guard = 0;
+    while (left >= MIN_FINISH && guard < 20) {
+      guard += 1;
+      const before = left;
+      walkDays(lastSpread, "double");
+      if (left === before) break;
     }
-    if (left >= 15 && daysUntilDue(task, now) <= 1) {
-      for (let offset = 0; offset <= 14 && left >= 15; offset += 1) {
-        const day = addDays(today, offset);
-        if (day > lastDay) break;
-        placeOnDay(day, true);
-      }
+    if (left >= MIN_FINISH && lastDay > lastSpread) {
+      walkDays(lastDay, "spread");
+      walkDays(lastDay, "fill");
+      walkDays(lastDay, "double");
+    }
+    left = absorbRemainingIntoSessions(left, sessions, availability, task, state, now, workToday);
+    if (left >= MIN_FINISH) {
+      walkDays(lastDay, "double");
+      left = absorbRemainingIntoSessions(left, sessions, availability, task, state, now, workToday);
     }
 
     const valid = validateRecommendedSessions(
@@ -846,37 +1143,63 @@ export function buildSmartSchedule(state: AppState, now = new Date()): SmartSche
       now,
     ).filter((session) => session.taskId === task.id);
     placed.push(...valid);
-    const planned = valid.reduce((sum, session) => sum + session.minutes, 0);
-    const remaining = Math.max(0, needed - planned);
-    let track: TrackState = "on_track";
-    if (hours < 0) track = "overdue";
-    else if (availableBeforeDeadline < needed) track = "at_risk";
-    else if (planned < needed) track = "needs_planning";
-    const atRisk = track === "at_risk" || track === "overdue";
+    const duration = validateTaskPlannedDuration(needed, valid);
+    let leftoverCapacity = 0;
+    for (let offset = 0; offset <= 14; offset += 1) {
+      const day = addDays(today, offset);
+      if (day > lastDay) break;
+      const window = recommendWindow(state, day);
+      const dueEnd = dueCutoffMin(task, day);
+      const minStart = toISODate(day) === toISODate(today) ? Math.max(window.start, nowMin) : window.start;
+      leftoverCapacity += spanMinutes(
+        availability.get(toISODate(day)) ?? [],
+        minStart,
+        Math.min(window.end, dueEnd),
+      );
+    }
+    const classified = classifyTaskTrack({
+      hoursUntilDue: hours,
+      remainingMinutes: duration.remainingMinutes,
+      availableMinutesBeforeDeadline: leftoverCapacity,
+    });
+    const atRisk = classified.track === "at_risk" || classified.track === "overdue";
     plans.push({
       task,
       needed,
-      planned,
-      remaining,
-      enough: track === "on_track",
+      planned: duration.scheduledMinutes,
+      remaining: duration.remainingMinutes,
+      enough: !atRisk,
       status: atRisk ? "behind" : "on_track",
-      track,
+      track: classified.track,
       sessions: valid,
       availableBeforeDeadline,
-      shortBy: remaining,
+      shortBy: classified.shortfallMinutes,
       atRisk,
     });
   }
 
-  const workSessions = plans.flatMap((plan) => plan.sessions);
-  const usedBreaks = breaks.filter((item) =>
-    workSessions.some(
-      (session) =>
-        session.dateKey === item.dateKey && session.startMin === item.endMin,
-    ),
-  );
-
-  return { plans, breaks: usedBreaks };
+  const breaks = insertBreaksBetweenWork(plans, state, now, prefBreak);
+  for (const plan of plans) {
+    const duration = validateTaskPlannedDuration(plan.needed, plan.sessions);
+    plan.planned = duration.scheduledMinutes;
+    plan.remaining = duration.remainingMinutes;
+    const hoursLeft = hoursUntil(plan.task.dueAt, now);
+    if (hoursLeft < 0 && duration.remainingMinutes > 0) {
+      plan.track = "overdue";
+      plan.atRisk = true;
+      plan.enough = false;
+      plan.status = "behind";
+      continue;
+    }
+    if (duration.remainingMinutes <= 0) {
+      plan.track = "on_track";
+      plan.shortBy = 0;
+      plan.atRisk = false;
+      plan.enough = true;
+      plan.status = "on_track";
+    }
+  }
+  return { plans, breaks };
 }
 
 export function buildReservedSchedule(state: AppState, now = new Date()): TaskPlan[] {
@@ -1034,33 +1357,87 @@ export function getUpcomingDeadlines(state: AppState, now = new Date()): Deadlin
   return days;
 }
 
-function freePeriod(startMin: number): { label: string; emoji: string } {
-  if (startMin >= 18 * 60 && startMin < 21 * 60) return { label: "Free evening", emoji: "🟢" };
-  if (startMin >= 17 * 60 && startMin < 18 * 60) return { label: "Dinner / personal time", emoji: "🍽️" };
-  if (startMin >= 15 * 60 + 30) return { label: "Free time", emoji: "🟢" };
-  if (startMin >= 12 * 60) return { label: "Free afternoon", emoji: "🟢" };
-  if (startMin >= 8 * 60) return { label: "Free morning", emoji: "🟢" };
-  return { label: "Free time", emoji: "🟢" };
-}
-
-function splitFreePeriods(slots: OpenSpan[]): OpenSpan[] {
-  const cuts = [12 * 60, 15 * 60 + 30, 17 * 60, 18 * 60, 21 * 60];
+function mergeSpans(spans: OpenSpan[]): OpenSpan[] {
+  const sorted = [...spans].sort((a, b) => a.startMin - b.startMin);
   const out: OpenSpan[] = [];
-  for (const slot of slots) {
-    let start = slot.startMin;
-    const ends = [...cuts.filter((cut) => cut > slot.startMin && cut < slot.endMin), slot.endMin];
-    for (const end of ends) {
-      if (end - start >= 15) out.push({ startMin: start, endMin: end });
-      start = end;
+  for (const span of sorted) {
+    const last = out[out.length - 1];
+    if (last && span.startMin <= last.endMin) {
+      last.endMin = Math.max(last.endMin, span.endMin);
+    } else {
+      out.push({ ...span });
     }
   }
   return out;
+}
+
+function freeLabel(startMin: number): { title: string; emoji: string } {
+  if (startMin >= 18 * 60) return { title: "Free evening", emoji: "🟢" };
+  if (startMin >= 12 * 60) return { title: "Free afternoon", emoji: "🟢" };
+  if (startMin >= 9 * 60) return { title: "Free morning", emoji: "🟢" };
+  return { title: "Free time", emoji: "🟢" };
+}
+
+export function calculateDailySummary(items: CoachItem[], window: { start: number; end: number }): DailySummary {
+  const workMinutes = items.filter((item) => item.kind === "work").reduce((sum, item) => sum + item.minutes, 0);
+  const breakMinutes = items.filter((item) => item.kind === "break").reduce((sum, item) => sum + item.minutes, 0);
+  const personalMinutes = items.filter((item) => item.kind === "personal").reduce((sum, item) => sum + item.minutes, 0);
+  const freeMinutes = items.filter((item) => item.kind === "free").reduce((sum, item) => sum + item.minutes, 0);
+  const eventMinutes = items.filter((item) => item.kind === "event" as CoachItem["kind"]).reduce((sum, item) => sum + item.minutes, 0);
+  return {
+    windowStart: window.start,
+    windowEnd: window.end,
+    windowMinutes: Math.max(0, window.end - window.start),
+    eventMinutes,
+    workMinutes,
+    breakMinutes,
+    personalMinutes,
+    freeMinutes,
+  };
+}
+
+export function validateDailyPlan(plan: CoachDayPlan, schoolDay = false): string[] {
+  const errors: string[] = [];
+  const items = [...plan.items].sort((a, b) => a.startMin - b.startMin);
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    if (item.endMin <= item.startMin) errors.push(`${item.title} has invalid times`);
+    if (item.minutes !== item.endMin - item.startMin) errors.push(`${item.title} minutes mismatch`);
+    const next = items[i + 1];
+    if (next && item.endMin > next.startMin) errors.push(`${item.title} overlaps ${next.title}`);
+    if (item.kind === "work" && item.startMin < 9 * 60) errors.push(`${item.title} starts before 9:00`);
+    if (schoolDay && item.kind === "work" && item.startMin < 16 * 60) {
+      errors.push(`${item.title} starts before 4:00 PM on a school day`);
+    }
+    if (item.kind === "break") {
+      const before = items[i - 1];
+      const after = items[i + 1];
+      if (before?.kind !== "work" || after?.kind !== "work") {
+        errors.push(`isolated break at ${item.startMin}`);
+      }
+      if (before && before.endMin !== item.startMin) errors.push("break not attached to prior work");
+      if (after && after.startMin !== item.endMin) errors.push("break not attached to next work");
+    }
+  }
+  const accounted =
+    plan.summary.workMinutes +
+    plan.summary.breakMinutes +
+    plan.summary.personalMinutes +
+    plan.summary.freeMinutes +
+    plan.summary.eventMinutes;
+  if (plan.summary.workMinutes !== plan.workMinutes) errors.push("work summary mismatch");
+  if (plan.summary.freeMinutes !== plan.freeMinutes) errors.push("free summary mismatch");
+  if (accounted > plan.summary.windowMinutes + 1) errors.push("summary exceeds window");
+  return errors;
 }
 
 export function getCoachDayPlan(state: AppState, day: Date, now = new Date()): CoachDayPlan {
   const date = startOfDay(day);
   const dateKey = toISODate(date);
   const smart = buildSmartSchedule(state, now);
+  const window = workWindow(state);
+  const schoolDay = isAcademicSchoolDay(state, date);
+
   const workItems: CoachItem[] = smart.plans.flatMap((plan) =>
     plan.sessions
       .filter((session) => session.dateKey === dateKey && session.startMin != null && session.endMin != null)
@@ -1084,52 +1461,108 @@ export function getCoachDayPlan(state: AppState, day: Date, now = new Date()): C
       title: item.label,
       emoji: "☕",
     }));
-  const occupied = [...workItems, ...breakItems];
-  let freeSpans: OpenSpan[] = calculateFreeTime(state, date, { now }).map((slot) => ({
-    startMin: slot.startMin,
-    endMin: slot.endMin,
-  }));
-  for (const item of occupied) {
-    freeSpans = subtractBooked(freeSpans, { startMin: item.startMin, endMin: item.endMin });
+
+  const eventSpans: OpenSpan[] = [];
+  for (const event of state.events) {
+    for (const occ of occupanciesForEvent(event, date)) {
+      eventSpans.push({ startMin: occ.startMin, endMin: occ.endMin });
+    }
   }
-  const freeItems: CoachItem[] = splitFreePeriods(freeSpans).map((span) => {
-    const meta = freePeriod(span.startMin);
-    return {
-      kind: "free" as const,
-      startMin: span.startMin,
-      endMin: span.endMin,
-      minutes: span.endMin - span.startMin,
-      title: meta.label,
-      emoji: meta.emoji,
-      period: meta.label,
-    };
-  });
-  const items = [...workItems, ...breakItems, ...freeItems].sort((a, b) => a.startMin - b.startMin);
-  const workMinutes = workItems.reduce((sum, item) => sum + item.minutes, 0);
-  const breakMinutes = breakItems.reduce((sum, item) => sum + item.minutes, 0);
-  const freeMinutes = freeItems.reduce((sum, item) => sum + item.minutes, 0);
-  const leftover = [...freeItems].reverse().find((item) => item.startMin >= 17 * 60) ?? freeItems[freeItems.length - 1] ?? null;
-  const firstWork = workItems[0];
+  for (const block of occupanciesForBlocks(state.blocks, date)) {
+    eventSpans.push({ startMin: block.startMin, endMin: block.endMin });
+  }
+
+  const occupied: OpenSpan[] = [
+    ...workItems,
+    ...breakItems,
+    ...eventSpans,
+  ].map((item) => ({ startMin: item.startMin, endMin: item.endMin }));
+
+  const clockStart =
+    toISODate(date) === toISODate(now)
+      ? Math.max(window.start, now.getHours() * 60 + now.getMinutes())
+      : window.start;
+  let remainder: OpenSpan[] = [{ startMin: clockStart, endMin: window.end }];
+  for (const item of occupied) {
+    remainder = subtractBooked(remainder, item);
+  }
+
+  const personalItems: CoachItem[] = [];
+  const leftover: OpenSpan[] = [];
+  for (const span of remainder) {
+    const dinner = clipSpan(span, PERSONAL_START, PERSONAL_END);
+    if (dinner) {
+      personalItems.push({
+        kind: "personal",
+        startMin: dinner.startMin,
+        endMin: dinner.endMin,
+        minutes: dinner.endMin - dinner.startMin,
+        title: "Dinner / personal time",
+        emoji: "🍽️",
+      });
+      leftover.push(...subtractBooked([span], dinner));
+    } else {
+      leftover.push(span);
+    }
+  }
+
+  const freeItems: CoachItem[] = mergeSpans(leftover)
+    .filter((span) => span.endMin - span.startMin >= 15)
+    .map((span) => {
+      const meta = freeLabel(span.startMin);
+      return {
+        kind: "free" as const,
+        startMin: span.startMin,
+        endMin: span.endMin,
+        minutes: span.endMin - span.startMin,
+        title: meta.title,
+        emoji: meta.emoji,
+        period: meta.title,
+      };
+    });
+
+  const items = [...workItems, ...breakItems, ...personalItems, ...freeItems].sort(
+    (a, b) => a.startMin - b.startMin,
+  );
+  const eventMinutes = eventSpans.reduce((sum, span) => {
+    const clipped = clipSpan(span, window.start, window.end);
+    return sum + (clipped ? clipped.endMin - clipped.startMin : 0);
+  }, 0);
+  const summary = {
+    ...calculateDailySummary(items, window),
+    eventMinutes,
+  };
+  const leftoverFree =
+    [...freeItems].reverse().find((item) => item.startMin >= 17 * 60) ??
+    freeItems[freeItems.length - 1] ??
+    null;
+  const firstWork = [...workItems].sort((a, b) => a.startMin - b.startMin)[0];
+  const lastWork = [...workItems].sort((a, b) => a.startMin - b.startMin)[workItems.length - 1];
   const headline = firstWork
-    ? `${clockRange(firstWork.startMin, workItems[workItems.length - 1].endMin)} is the best window to knock out today’s work`
-    : leftover
-      ? `${leftover.emoji} ${clockRange(leftover.startMin, leftover.endMin)} is free`
+    ? schoolDay
+      ? `Tonight ${clockRange(Math.max(firstWork.startMin, 16 * 60), leftoverFree?.endMin ?? lastWork.endMin)} — here’s what I’d do`
+      : `${clockRange(firstWork.startMin, lastWork.endMin)} is the best window for today’s work`
+    : leftoverFree
+      ? `${leftoverFree.emoji} ${clockRange(leftoverFree.startMin, leftoverFree.endMin)} is free`
       : "No open work time left today";
-  const urgentCount = smart.plans.filter(
-    (plan) => plan.track === "overdue" || plan.track === "at_risk" || daysUntilDue(plan.task, now) <= 1,
-  ).length;
-  const testCount = smart.plans.filter((plan) => isStudyTask(plan.task)).length;
+
   return {
     date,
     dateKey,
-    workMinutes,
-    breakMinutes,
-    freeMinutes,
-    urgentCount,
-    testCount,
+    workMinutes: summary.workMinutes,
+    breakMinutes: summary.breakMinutes,
+    freeMinutes: summary.freeMinutes,
+    personalMinutes: summary.personalMinutes,
+    eventMinutes: summary.eventMinutes,
+    windowMinutes: summary.windowMinutes,
+    urgentCount: smart.plans.filter(
+      (plan) => plan.track === "overdue" || plan.track === "at_risk" || daysUntilDue(plan.task, now) <= 1,
+    ).length,
+    testCount: smart.plans.filter((plan) => isStudyTask(plan.task)).length,
     items,
     headline,
-    leftover,
+    leftover: leftoverFree,
+    summary,
   };
 }
 
@@ -1220,7 +1653,7 @@ export function generateDeadlineReminders(
           weekday: "long",
           hour: "numeric",
           minute: "2-digit",
-        })}. You need ${formatDuration(plan.needed)} but only have ${formatDuration(plan.availableBeforeDeadline)} available before the deadline. You are short by ${formatDuration(plan.shortBy)}.`,
+        })}. You still need ${formatDuration(plan.remaining || plan.needed)} and only have ${formatDuration(plan.availableBeforeDeadline)} available before the deadline. You are short by ${formatDuration(plan.shortBy)}.`,
       });
       continue;
     }
