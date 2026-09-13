@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { EVENT_CATEGORIES } from "@/lib/labels";
+import { detectTimeConflicts, formatConflictMessage } from "@/lib/planning";
 import { useStore } from "@/lib/store";
 import { formatWeekdayLong } from "@/lib/time";
-import type { EventCategory } from "@/lib/types";
+import type { EventCategory, FixedEvent } from "@/lib/types";
 
 const DAYS = [1, 2, 3, 4, 5, 6, 0];
 
@@ -21,7 +22,7 @@ export function EventForm({
   lockedCategory?: EventCategory;
   titlePlaceholder?: string;
 }) {
-  const addEvent = useStore().addEvent;
+  const { addEvent, state } = useStore();
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<EventCategory>(
     lockedCategory ?? defaultCategory,
@@ -33,6 +34,39 @@ export function EventForm({
   const [travelMinutesBefore, setTravelMinutesBefore] = useState(15);
   const [travelMinutesAfter, setTravelMinutesAfter] = useState(15);
   const [saved, setSaved] = useState(false);
+  const [conflictOpen, setConflictOpen] = useState(false);
+
+  const draft: Omit<FixedEvent, "id"> = useMemo(
+    () => ({
+      title: title.trim() || "New activity",
+      category: lockedCategory ?? category,
+      startTime,
+      endTime,
+      daysOfWeek: specificDate ? [] : daysOfWeek,
+      specificDate: specificDate || undefined,
+      travelMinutesBefore,
+      travelMinutesAfter,
+    }),
+    [
+      title,
+      lockedCategory,
+      category,
+      startTime,
+      endTime,
+      specificDate,
+      daysOfWeek,
+      travelMinutesBefore,
+      travelMinutesAfter,
+    ],
+  );
+
+  const liveConflicts = useMemo(
+    () =>
+      title.trim()
+        ? detectTimeConflicts(draft, state.events, state.blocks)
+        : [],
+    [draft, state.blocks, state.events, title],
+  );
 
   function toggleDay(day: number) {
     setDaysOfWeek((current) =>
@@ -42,27 +76,57 @@ export function EventForm({
     );
   }
 
+  function save() {
+    addEvent(draft);
+    setTitle("");
+    setSaved(true);
+    setConflictOpen(false);
+  }
+
   function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!title.trim()) return;
-    addEvent({
-      title: title.trim(),
-      category: lockedCategory ?? category,
-      startTime,
-      endTime,
-      daysOfWeek: specificDate ? [] : daysOfWeek,
-      specificDate: specificDate || undefined,
-      travelMinutesBefore,
-      travelMinutesAfter,
-    });
-    setTitle("");
-    setSaved(true);
+    const hits = detectTimeConflicts(draft, state.events, state.blocks);
+    if (hits.length > 0) {
+      setConflictOpen(true);
+      return;
+    }
+    save();
   }
 
   return (
     <form className="card p-5" onSubmit={onSubmit}>
       <h2 className="text-2xl">{heading}</h2>
       <p className="mt-1 mb-4 text-sm text-[var(--ink-soft)]">{blurb}</p>
+      {(conflictOpen || liveConflicts.length > 0) && (
+        <div className="warn-card mb-4 whitespace-pre-line">
+          <strong>⚠️ Time conflict</strong>
+          <div className="mt-2 space-y-2 text-sm text-[var(--ink-soft)]">
+            {(conflictOpen ? liveConflicts : liveConflicts.slice(0, 2)).map(
+              (hit) => (
+                <p key={`${hit.dateKey}-${hit.right.id}`}>
+                  {formatConflictMessage(hit)}
+                </p>
+              ),
+            )}
+          </div>
+          <p className="mt-2 text-sm">Existing activities were not changed.</p>
+          {conflictOpen && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setConflictOpen(false)}
+              >
+                Edit time
+              </button>
+              <button type="button" className="btn work" onClick={save}>
+                Keep anyway
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       <div className="grid-form">
         <label className="field" style={{ gridColumn: "1 / -1" }}>
           Title
@@ -169,7 +233,7 @@ export function EventForm({
         </button>
         {saved && (
           <p className="text-sm" style={{ color: "var(--ok)" }}>
-            Saved. Keep adding, then generate your plan on Weekly.
+            Saved. Keep adding, then generate your plan.
           </p>
         )}
       </div>

@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import { TASK_TYPES } from "@/lib/labels";
 import { useStore } from "@/lib/store";
-import type { Difficulty, TaskType } from "@/lib/types";
+import type { Difficulty, TaskPriority, TaskType } from "@/lib/types";
 
 function defaultDue(): string {
   const date = new Date();
@@ -27,6 +27,7 @@ export function TaskForm({
   const [dueAt, setDueAt] = useState(defaultDue);
   const [estimatedMinutes, setEstimatedMinutes] = useState(45);
   const [difficulty, setDifficulty] = useState<Difficulty>("medium");
+  const [priority, setPriority] = useState<TaskPriority>("medium");
   const [canSplit, setCanSplit] = useState(true);
   const [saved, setSaved] = useState(false);
 
@@ -38,9 +39,12 @@ export function TaskForm({
       className: className.trim(),
       type,
       dueAt: new Date(dueAt).toISOString(),
-      estimatedMinutes,
+      estimatedMinutes: Number.isFinite(estimatedMinutes)
+        ? Math.max(0, estimatedMinutes)
+        : 45,
       difficulty,
-      canSplit,
+      priority,
+      canSplit: type === "test" || type === "quiz" ? true : canSplit,
     });
     setTitle("");
     setClassName("");
@@ -111,6 +115,17 @@ export function TaskForm({
             <option value="easy">Easy</option>
             <option value="medium">Medium</option>
             <option value="hard">Hard</option>
+          </select>
+        </label>
+        <label className="field">
+          Priority
+          <select
+            value={priority}
+            onChange={(event) => setPriority(event.target.value as TaskPriority)}
+          >
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
           </select>
         </label>
         <label

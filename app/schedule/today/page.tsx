@@ -1,5 +1,6 @@
 "use client";
 
+import { TodayDashboard } from "@/components/TodayDashboard";
 import { SchedulePage } from "@/components/SchedulePage";
 import { todayColumn } from "@/lib/plan";
 import { useStore } from "@/lib/store";
@@ -11,16 +12,21 @@ export default function TodaySchedulePage() {
   const name = state.preferences.studentName || "there";
 
   return (
-    <SchedulePage
-      title={`Hey ${name}`}
-      blurb="Today’s activities and planned work. Add more below, then generate your plan."
-      rangeLabel={day.toLocaleDateString([], {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      })}
-      columns={columns}
-      layout="stack"
-    />
+    <>
+      <TodayDashboard />
+      <div className="mt-6">
+        <SchedulePage
+          title={`Hey ${name}`}
+          blurb="Today’s activities and planned work. Add more below, then generate your plan."
+          rangeLabel={day.toLocaleDateString([], {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+          })}
+          columns={columns}
+          layout="stack"
+        />
+      </div>
+    </>
   );
 }

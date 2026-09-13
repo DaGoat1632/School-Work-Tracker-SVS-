@@ -1,8 +1,8 @@
 "use client";
 
+import { getCoachDayPlan } from "@/lib/planning";
 import { eventColor } from "@/lib/labels";
 import type { DayColumn } from "@/lib/plan";
-import { formatFreeHours } from "@/lib/plan";
 import {
   formatClock,
   formatDuration,
@@ -21,14 +21,18 @@ type TimelineItem = {
   title: string;
   startMin: number;
   endMin: number;
-  kind: "work" | "event" | "travel";
+  kind: "work" | "event" | "travel" | "free" | "break";
   color: string;
   minutes: number;
   status?: string;
   workId?: string;
 };
 
-function buildItems(column: DayColumn, planReady: boolean): TimelineItem[] {
+function buildItems(
+  column: DayColumn,
+  planReady: boolean,
+  state: ReturnType<typeof useStore>["state"],
+): TimelineItem[] {
   const items: TimelineItem[] = [];
 
   for (const event of column.dayEvents) {
@@ -85,6 +89,25 @@ function buildItems(column: DayColumn, planReady: boolean): TimelineItem[] {
     }
   }
 
+  const coach = getCoachDayPlan(state, column.day);
+  for (const item of coach.items) {
+    if (planReady && item.kind === "work") continue;
+    items.push({
+      id: `${item.kind}-${item.startMin}-${item.title}`,
+      title: `${item.emoji} ${item.title}`,
+      startMin: item.startMin,
+      endMin: item.endMin,
+      kind: item.kind,
+      color:
+        item.kind === "work"
+          ? "var(--work)"
+          : item.kind === "break"
+            ? "#c4843a"
+            : "var(--ok)",
+      minutes: item.minutes,
+    });
+  }
+
   return items.sort((a, b) => a.startMin - b.startMin);
 }
 
@@ -96,10 +119,9 @@ function DayTimeline({
   compact?: boolean;
 }) {
   const { state, toggleBlockDone } = useStore();
-  const items = buildItems(column, state.planReady);
-  const workMinutes = column.workBlocks
-    .filter((block) => block.status !== "done")
-    .reduce((sum, block) => sum + block.minutes, 0);
+  const coach = getCoachDayPlan(state, column.day);
+  const items = buildItems(column, state.planReady, state);
+  const workMinutes = coach.workMinutes;
   const hours = Array.from(
     { length: END_HOUR - START_HOUR },
     (_, index) => START_HOUR + index,
@@ -117,14 +139,12 @@ function DayTimeline({
         </div>
         <div className="text-right text-sm">
           <p style={{ color: "var(--ok)", fontWeight: 650 }}>
-            {formatFreeHours(column.free)}
+            {formatDuration(coach.freeMinutes)} free
           </p>
           <p className="text-[var(--ink-soft)]">
             {workMinutes > 0
-              ? `${formatDuration(workMinutes)} of work`
-              : state.planReady
-                ? "No work blocks"
-                : "Generate a plan for work times"}
+              ? `${formatDuration(workMinutes)} planned work`
+              : "No work recommended"}
           </p>
         </div>
       </header>
@@ -154,8 +174,10 @@ function DayTimeline({
                     <p className="timeline-meta">
                       {formatClock(toClock(item.startMin))} –{" "}
                       {formatClock(toClock(item.endMin))}
-                      {item.kind === "work" ? " · study block" : ""}
+                      {item.kind === "work" ? " · work" : ""}
+                      {item.kind === "break" ? " · break" : ""}
                       {item.kind === "travel" ? " · travel" : ""}
+                      {item.kind === "free" ? " · free time" : ""}
                     </p>
                   </div>
                   {item.kind === "work" && item.workId && (
@@ -215,7 +237,16 @@ function DayTimeline({
                       top: `${top}%`,
                       height: `${h}%`,
                       background: item.color,
-                      opacity: item.status === "done" ? 0.4 : item.kind === "travel" ? 0.7 : 0.95,
+                      opacity:
+                        item.status === "done"
+                          ? 0.4
+                          : item.kind === "break"
+                            ? 0.85
+                          : item.kind === "travel"
+                            ? 0.7
+                            : item.kind === "free"
+                              ? 0.35
+                              : 0.95,
                     }}
                     title={`${item.title} · ${formatDuration(item.minutes)}`}
                   >

@@ -297,8 +297,8 @@ h3,
   color: #fffaf3;
 }
 
-.timeline-row.done .timeline-block {
-  opacity: 0.5;
+.timeline-row.break .timeline-block {
+  color: #fffaf3;
 }
 
 .timeline-row.done .timeline-title {

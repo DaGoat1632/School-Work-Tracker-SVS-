@@ -31,6 +31,9 @@ export function AddChrome({
         <Link href="/schedule/today" className="btn ghost">
           Back to Today
         </Link>
+        <Link href="/" className="btn ghost">
+          Home
+        </Link>
       </div>
     </header>
   );

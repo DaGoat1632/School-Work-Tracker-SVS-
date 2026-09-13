@@ -6,6 +6,7 @@ import { conflictCount } from "@/lib/plan";
 import { useStore } from "@/lib/store";
 
 const NAV = [
+  { href: "/", label: "Home", icon: "⌂" },
   { href: "/schedule/today", label: "Today", icon: "📅" },
   { href: "/schedule/tomorrow", label: "Tomorrow", icon: "🗓" },
   { href: "/schedule/week", label: "This week", icon: "▦" },
@@ -39,7 +40,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="sidebar-nav flex flex-col gap-1.5 px-1">
           {NAV.map((link) => {
             const active =
-              pathname === link.href || pathname.startsWith(`${link.href}/`);
+              link.href === "/"
+                ? pathname === "/"
+                : pathname === link.href || pathname.startsWith(`${link.href}/`);
             return (
               <Link
                 key={link.href}

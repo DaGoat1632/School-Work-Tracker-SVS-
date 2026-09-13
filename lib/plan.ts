@@ -187,8 +187,15 @@ export function planBuckets(blocks: ScheduledBlock[], now = new Date()): PlanBuc
   ];
 }
 
+import { detectAllTimeConflicts } from "./planning";
+
 export function conflictCount(state: AppState): number {
-  return state.warnings.filter(
-    (warning) => warning.type === "overload" || warning.type === "past_due",
+  const timeHits = detectAllTimeConflicts(state).length;
+  const planHits = state.warnings.filter(
+    (warning) =>
+      warning.type === "overload" ||
+      warning.type === "past_due" ||
+      warning.type === "study_short",
   ).length;
+  return timeHits + planHits;
 }

@@ -297,6 +297,18 @@ export function buildSchedule(input: {
         });
       }
     }
+    if (task.type === "test" || task.type === "quiz") {
+      const recommended =
+        task.estimatedMinutes > 0 ? task.estimatedMinutes : 120;
+      const planned = Math.max(0, recommended - leftover);
+      if (leftover > 0 || planned < recommended) {
+        warnings.push({
+          type: "study_short",
+          taskId: task.id,
+          message: `⚠️ You may not have enough study time before this test. Study planned: ${Math.round(planned / 60 * 10) / 10} hr. Recommended: ${Math.round(recommended / 60 * 10) / 10} hr. Remaining: ${leftover} min.`,
+        });
+      }
+    }
   }
 
   const blocks = [...kept, ...generated].sort(

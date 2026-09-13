@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { recommendStudySessions, recommendTaskSessions } from "@/lib/planning";
 import { useStore } from "@/lib/store";
 import { formatDue } from "@/lib/time";
 
@@ -32,9 +33,24 @@ export default function HomeworkPage() {
                 <h3 className="mt-2 text-2xl">{task.title}</h3>
                 <p className="text-sm text-[var(--ink-soft)]">
                   {task.className ? `${task.className} · ` : ""}
-                  {task.difficulty} · {task.remainingMinutes}/{task.estimatedMinutes}m
-                  · due {formatDue(task.dueAt)}
+                  {task.priority ?? task.difficulty} · {task.remainingMinutes}/
+                  {task.estimatedMinutes}m · due {formatDue(task.dueAt)}
                 </p>
+                {!task.completed && (
+                  <ul className="mt-2 text-sm text-[var(--ink-soft)]">
+                    {(task.type === "test" || task.type === "quiz"
+                      ? recommendStudySessions(task, state).sessions
+                      : recommendTaskSessions(task, state)
+                    )
+                      .slice(0, 5)
+                      .map((session) => (
+                        <li key={`${session.dateKey}-${session.label}`}>
+                          {session.date.toLocaleDateString([], { weekday: "long" })}:{" "}
+                          {session.label}
+                        </li>
+                      ))}
+                  </ul>
+                )}
               </div>
               <div className="flex gap-2">
                 {!task.completed && (

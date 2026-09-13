@@ -1,4 +1,5 @@
 export type Difficulty = "easy" | "medium" | "hard";
+export type TaskPriority = "low" | "medium" | "high";
 export type TaskType =
   | "homework"
   | "project"
@@ -15,6 +16,21 @@ export type EventCategory =
   | "commute"
   | "other";
 export type BlockStatus = "planned" | "done" | "skipped" | "partial";
+export type FreeSize = "short" | "medium" | "long";
+export type ReminderUrgency =
+  | "urgent"
+  | "important"
+  | "upcoming"
+  | "opportunity"
+  | "ok";
+export type NotificationKind =
+  | "conflict"
+  | "test"
+  | "overdue"
+  | "deadline"
+  | "freetime"
+  | "getahead"
+  | "ahead";
 
 export type Preferences = {
   studentName: string;
@@ -48,6 +64,7 @@ export type Task = {
   estimatedMinutes: number;
   remainingMinutes: number;
   difficulty: Difficulty;
+  priority: TaskPriority;
   canSplit: boolean;
   completed: boolean;
   createdAt: string;
@@ -65,8 +82,16 @@ export type ScheduledBlock = {
 };
 
 export type Warning = {
-  type: "overload" | "tight" | "past_due";
+  type: "overload" | "tight" | "past_due" | "study_short";
   taskId?: string;
+  message: string;
+};
+
+export type PlanningNotification = {
+  id: string;
+  kind: NotificationKind;
+  urgency: ReminderUrgency;
+  title: string;
   message: string;
 };
 
@@ -78,6 +103,7 @@ export type AppState = {
   warnings: Warning[];
   lastPlannedAt: string | null;
   planReady: boolean;
+  dismissedNotificationIds: string[];
 };
 
 export const DEFAULT_PREFERENCES: Preferences = {

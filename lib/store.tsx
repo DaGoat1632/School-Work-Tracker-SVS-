@@ -28,6 +28,7 @@ const EMPTY_STATE: AppState = {
   warnings: [],
   lastPlannedAt: null,
   planReady: false,
+  dismissedNotificationIds: [],
 };
 
 const STORAGE_KEY = "stride-student-planner-v2";
@@ -53,6 +54,7 @@ type StoreValue = {
   generatePlan: () => void;
   replan: () => void;
   resetDemo: () => void;
+  dismissNotification: (id: string) => void;
 };
 
 const StoreContext = createContext<StoreValue | null>(null);
@@ -85,6 +87,17 @@ function loadState(): AppState {
       ...parsed,
       preferences: { ...DEFAULT_PREFERENCES, ...parsed.preferences },
       planReady: Boolean(parsed.planReady),
+      dismissedNotificationIds: parsed.dismissedNotificationIds ?? [],
+      tasks: (parsed.tasks ?? seed.tasks).map((task) => ({
+        ...task,
+        priority:
+          task.priority ??
+          (task.difficulty === "hard"
+            ? "high"
+            : task.difficulty === "easy"
+              ? "low"
+              : "medium"),
+      })),
     };
     return merged.planReady ? runPlan(merged) : merged;
   } catch {
@@ -122,7 +135,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             {
               ...input,
               id: uid(),
-              remainingMinutes: input.estimatedMinutes,
+              remainingMinutes: Math.max(0, input.estimatedMinutes || 45),
+              estimatedMinutes: Math.max(0, input.estimatedMinutes || 45),
+              priority:
+                input.priority ??
+                (input.difficulty === "hard"
+                  ? "high"
+                  : input.difficulty === "easy"
+                    ? "low"
+                    : "medium"),
               completed: false,
               createdAt: new Date().toISOString(),
             },
@@ -263,6 +284,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       generatePlan: () => setState((current) => runPlan({ ...current, blocks: [] })),
       replan: () => setState((current) => runPlan(current)),
       resetDemo: () => setState(createSeedState()),
+      dismissNotification: (id) => {
+        setState((current) => ({
+          ...current,
+          dismissedNotificationIds: current.dismissedNotificationIds.includes(id)
+            ? current.dismissedNotificationIds
+            : [...current.dismissedNotificationIds, id],
+        }));
+      },
     }),
     [state, hydrated],
   );
