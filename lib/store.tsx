@@ -165,6 +165,8 @@ function loadState(): AppState {
       ...parsed,
       preferences: { ...DEFAULT_PREFERENCES, ...parsed.preferences },
       planReady: Boolean(parsed.planReady),
+      events: parsed.events ?? seed.events,
+      blocks: parsed.blocks ?? [],
       dismissedNotificationIds: parsed.dismissedNotificationIds ?? [],
       studySessions: (parsed.studySessions ?? []).map((session) => ({
         ...session,

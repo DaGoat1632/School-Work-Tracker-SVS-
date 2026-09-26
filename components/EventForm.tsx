@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { EVENT_CATEGORIES } from "@/lib/labels";
 import { detectTimeConflicts, formatConflictMessage } from "@/lib/planning";
 import { useStore } from "@/lib/store";
@@ -23,6 +24,7 @@ export function EventForm({
   titlePlaceholder?: string;
 }) {
   const { addEvent, state } = useStore();
+  const router = useRouter();
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<EventCategory>(
     lockedCategory ?? defaultCategory,
@@ -86,6 +88,7 @@ export function EventForm({
     setTitle("");
     setSaved(true);
     setConflictOpen(false);
+    router.push("/activities");
   }
 
   function onSubmit(event: FormEvent) {

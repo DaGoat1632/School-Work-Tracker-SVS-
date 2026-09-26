@@ -36,8 +36,8 @@ export default function ActivitiesPage() {
                 {EVENT_CATEGORIES.find((item) => item.value === event.category)?.label} ·{" "}
                 {formatClock(event.startTime)} – {formatClock(event.endTime)}
                 {event.specificDate
-                  ? ` · ${event.specificDate}`
-                  : event.daysOfWeek.length
+                  ? ` · ${String(event.specificDate).slice(0, 10)}`
+                  : event.daysOfWeek?.length
                     ? ` · ${event.daysOfWeek.map((day) => formatWeekdayLong(day).slice(0, 3)).join(", ")}`
                     : ""}
               </p>

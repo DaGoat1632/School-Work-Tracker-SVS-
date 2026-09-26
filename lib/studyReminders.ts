@@ -17,7 +17,7 @@ export function studySessionReminders(
   const todayKey = toISODate(now);
   const yesterdayKey = toISODate(addDays(startOfDay(now), -1));
 
-  for (const session of state.studySessions) {
+  for (const session of state.studySessions ?? []) {
     if (session.completed) continue;
     const task = state.tasks.find((item) => item.id === session.taskId);
     if (!task || task.completed) continue;

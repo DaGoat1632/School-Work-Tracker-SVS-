@@ -5,15 +5,20 @@ import { studySessionReminders } from "@/lib/studyReminders";
 import { useStore } from "@/lib/store";
 
 function calm(text: string): string {
-  return text.replace(/\p{Extended_Pictographic}/gu, "").replace(/\s+/g, " ").trim();
+  try {
+    return text.replace(/\p{Extended_Pictographic}/gu, "").replace(/\s+/g, " ").trim();
+  } catch {
+    return text.replace(/\s+/g, " ").trim();
+  }
 }
 
 export default function RemindersPage() {
   const { state, dismissNotification } = useStore();
+  const dismissed = new Set(state.dismissedNotificationIds ?? []);
   const notes = [
     ...studySessionReminders(state),
     ...generatePlanningNotifications(state),
-  ];
+  ].filter((note) => !dismissed.has(note.id));
 
   if (notes.length === 0) {
     return (

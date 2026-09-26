@@ -173,7 +173,7 @@ function clampMin(value: number): number {
 
 function eventMatchesDay(event: Pick<FixedEvent, "daysOfWeek" | "specificDate">, day: Date): boolean {
   if (event.specificDate) return event.specificDate.slice(0, 10) === toISODate(day);
-  return event.daysOfWeek.includes(weekday(day));
+  return (event.daysOfWeek ?? []).includes(weekday(day));
 }
 
 function spanForTimes(startTime: string, endTime: string, travelBefore: number, travelAfter: number) {
@@ -305,8 +305,8 @@ function taskTitleMap(tasks: Task[]): Record<string, string> {
 export function detectAllTimeConflicts(state: AppState, now = new Date()): TimeConflict[] {
   const conflicts: TimeConflict[] = [];
   const seen = new Set<string>();
-  const titles = taskTitleMap(state.tasks);
-  for (const event of state.events) {
+  const titles = taskTitleMap(state.tasks ?? []);
+  for (const event of state.events ?? []) {
     for (const hit of detectTimeConflicts(event, state.events, state.studySessions ?? [], now, titles)) {
       const key = `${hit.dateKey}:${[hit.left.id, hit.right.id].sort().join(":")}`;
       if (seen.has(key)) continue;
@@ -380,8 +380,8 @@ export function calculateFreeTime(
   const clock = options?.now ?? new Date();
   const window = dayWorkWindow(state, day);
   const busy = [
-    ...state.events.flatMap((event) => occupanciesForEvent(event, day)),
-    ...(includeWork ? occupanciesForBlocks(state.blocks, day) : []),
+    ...(state.events ?? []).flatMap((event) => occupanciesForEvent(event, day)),
+    ...(includeWork ? occupanciesForBlocks(state.blocks ?? [], day) : []),
   ].sort((a, b) => a.startMin - b.startMin);
 
   let cursor = window.start;
@@ -1650,18 +1650,21 @@ export function getTodayActionPlan(state: AppState, now = new Date()): FreeBlock
 export function generateDeadlineReminders(
   state: AppState,
   now = new Date(),
+  plans?: TaskPlan[],
 ): PlanningNotification[] {
   const dateKey = toISODate(now);
   const notes: PlanningNotification[] = [];
   const tonight = calculateFreeTime(state, startOfDay(now), { now }).sort((a, b) => b.minutes - a.minutes)[0];
+  const resolvedPlans = plans ?? buildReservedSchedule(state, now);
+  const planById = new Map(resolvedPlans.map((plan) => [plan.task.id, plan]));
 
-  for (const task of state.tasks) {
+  for (const task of state.tasks ?? []) {
     if (task.completed || workLeft(task) <= 0 || !task.dueAt) continue;
     const hours = hoursUntil(task.dueAt, now);
     const dueDay = startOfDay(new Date(task.dueAt));
     const daysLeft = Math.round((dueDay.getTime() - startOfDay(now).getTime()) / 86_400_000);
     const needed = neededMinutes(task);
-    const plan = createTaskPlan(task, state, now);
+    const plan = planById.get(task.id) ?? emptyPlan(task);
     const nextSlot = plan.sessions[0];
     const when = nextSlot
       ? `${nextSlot.date.toLocaleDateString([], { weekday: "long" })} ${
@@ -1778,52 +1781,61 @@ export function generatePlanningNotifications(
   state: AppState,
   now = new Date(),
 ): PlanningNotification[] {
-  const dateKey = toISODate(now);
-  const notes: PlanningNotification[] = [];
-  const seen = new Set<string>();
-  const push = (note: PlanningNotification) => {
-    if (seen.has(note.id) || state.dismissedNotificationIds.includes(note.id)) return;
-    seen.add(note.id);
-    notes.push(note);
-  };
+  try {
+    const dateKey = toISODate(now);
+    const notes: PlanningNotification[] = [];
+    const seen = new Set<string>();
+    const dismissed = state.dismissedNotificationIds ?? [];
+    const push = (note: PlanningNotification) => {
+      if (seen.has(note.id) || dismissed.includes(note.id)) return;
+      seen.add(note.id);
+      notes.push(note);
+    };
 
-  for (const conflict of detectScheduleConflicts(state, now).slice(0, 3)) {
-    push({
-      id: `conflict:${conflict.dateKey}:${[conflict.left.id, conflict.right.id].sort().join(":")}`,
-      kind: "conflict",
-      urgency: "urgent",
-      title: "Schedule conflict detected",
-      message: `${conflict.left.title} overlaps ${conflict.right.title} by ${formatDuration(conflict.overlapMinutes)} on ${conflict.date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}.`,
-    });
+    const conflicts = detectScheduleConflicts(state, now);
+    for (const conflict of conflicts.slice(0, 3)) {
+      push({
+        id: `conflict:${conflict.dateKey}:${[conflict.left.id, conflict.right.id].sort().join(":")}`,
+        kind: "conflict",
+        urgency: "urgent",
+        title: "Schedule conflict detected",
+        message: `${conflict.left.title} overlaps ${conflict.right.title} by ${formatDuration(conflict.overlapMinutes)} on ${conflict.date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}.`,
+      });
+    }
+
+    const plans = buildReservedSchedule(state, now);
+    for (const note of generateDeadlineReminders(state, now, plans)) push(note);
+    try {
+      for (const note of generateFreeTimeNotifications(state, now)) push(note);
+    } catch (error) {
+      console.error(error);
+    }
+
+    const open = openTasks(state, now);
+    const behind = open.filter(
+      (task) => (plans.find((plan) => plan.task.id === task.id) ?? emptyPlan(task)).status === "behind",
+    );
+    const hasPressure = notes.some(
+      (note) => note.urgency === "urgent" || note.urgency === "important",
+    );
+    if (open.length > 0 && behind.length === 0 && !hasPressure && conflicts.length === 0) {
+      push({
+        id: `ahead:all:${dateKey}`,
+        kind: "ahead",
+        urgency: "ok",
+        title: "🚀 You’re ahead",
+        message: "All upcoming assignments have enough time scheduled before they are due.",
+      });
+    }
+
+    const rank: ReminderUrgency[] = ["urgent", "important", "upcoming", "opportunity", "ok"];
+    return notes
+      .sort((a, b) => rank.indexOf(a.urgency) - rank.indexOf(b.urgency))
+      .slice(0, 7);
+  } catch (error) {
+    console.error(error);
+    return [];
   }
-
-  for (const note of generateDeadlineReminders(state, now)) push(note);
-  for (const note of generateFreeTimeNotifications(state, now)) push(note);
-
-  const open = openTasks(state, now);
-  const behind = open.filter((task) => getPlanningStatus(task, state, now) === "behind");
-  const hasPressure = notes.some(
-    (note) => note.urgency === "urgent" || note.urgency === "important",
-  );
-  if (
-    open.length > 0 &&
-    behind.length === 0 &&
-    !hasPressure &&
-    detectScheduleConflicts(state, now).length === 0
-  ) {
-    push({
-      id: `ahead:all:${dateKey}`,
-      kind: "ahead",
-      urgency: "ok",
-      title: "🚀 You’re ahead",
-      message: "All upcoming assignments have enough time scheduled before they are due.",
-    });
-  }
-
-  const rank: ReminderUrgency[] = ["urgent", "important", "upcoming", "opportunity", "ok"];
-  return notes
-    .sort((a, b) => rank.indexOf(a.urgency) - rank.indexOf(b.urgency))
-    .slice(0, 7);
 }
 
 export function todayInsights(state: AppState, now = new Date()) {

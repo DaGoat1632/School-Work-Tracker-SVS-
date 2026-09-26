@@ -130,9 +130,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <p className="sub">{copy.subtitle}</p>
           </div>
           <div className="flex items-center gap-2">
-            <Link href="/add/work" className="btn work">
-              + Add task
-            </Link>
+            {pathname.startsWith("/activities") || pathname.startsWith("/add/") ? (
+              <Link href="/add/sports" className="btn work">
+                + Add activity
+              </Link>
+            ) : (
+              <Link href="/add/work" className="btn work">
+                + Add task
+              </Link>
+            )}
             <div className="avatar" aria-hidden>
               {initial}
             </div>
