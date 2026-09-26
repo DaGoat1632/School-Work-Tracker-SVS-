@@ -45,7 +45,7 @@ function freeMinutesForDay(
   const dow = weekday(day);
   for (const event of events) {
     const matches = event.specificDate
-      ? event.specificDate === dateKey
+      ? event.specificDate.slice(0, 10) === dateKey
       : event.daysOfWeek.includes(dow);
     if (!matches) continue;
     const start =
@@ -73,7 +73,7 @@ const WEEKEND_AFTER_SCHOOL = 18 * 60;
 function eventOnDay(event: FixedEvent, day: Date): boolean {
   const dateKey = toISODate(day);
   return event.specificDate
-    ? event.specificDate === dateKey
+    ? event.specificDate.slice(0, 10) === dateKey
     : event.daysOfWeek.includes(weekday(day));
 }
 
@@ -164,7 +164,7 @@ export function columnsForDays(state: AppState, days: Date[]): DayColumn[] {
     );
     const dayEvents = state.events.filter((event) =>
       event.specificDate
-        ? event.specificDate === key
+        ? event.specificDate.slice(0, 10) === key
         : event.daysOfWeek.includes(weekday(day)),
     );
     return { day, key, free, workBlocks, dayEvents };

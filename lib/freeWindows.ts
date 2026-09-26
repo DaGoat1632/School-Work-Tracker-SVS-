@@ -19,7 +19,7 @@ const SETTLE_AFTER_SCHOOL = 30;
 const SETTLE_AFTER_ACTIVITY = 15;
 
 function eventOnDay(event: FixedEvent, day: Date): boolean {
-  if (event.specificDate) return event.specificDate === toISODate(day);
+  if (event.specificDate) return event.specificDate.slice(0, 10) === toISODate(day);
   return event.daysOfWeek.includes(weekday(day));
 }
 

@@ -60,12 +60,17 @@ export function EventForm({
     ],
   );
 
+  const taskTitles = useMemo(
+    () => Object.fromEntries(state.tasks.map((task) => [task.id, task.title])),
+    [state.tasks],
+  );
+
   const liveConflicts = useMemo(
     () =>
       title.trim()
-        ? detectTimeConflicts(draft, state.events, state.blocks)
+        ? detectTimeConflicts(draft, state.events, state.studySessions, new Date(), taskTitles)
         : [],
-    [draft, state.blocks, state.events, title],
+    [draft, state.events, state.studySessions, taskTitles, title],
   );
 
   function toggleDay(day: number) {
@@ -86,7 +91,13 @@ export function EventForm({
   function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!title.trim()) return;
-    const hits = detectTimeConflicts(draft, state.events, state.blocks);
+    const hits = detectTimeConflicts(
+      draft,
+      state.events,
+      state.studySessions,
+      new Date(),
+      taskTitles,
+    );
     if (hits.length > 0) {
       setConflictOpen(true);
       return;

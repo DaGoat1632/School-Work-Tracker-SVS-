@@ -14,6 +14,7 @@ import type {
   FreeSize,
   PlanningNotification,
   ScheduledBlock,
+  StudySession,
   Task,
   ReminderUrgency,
 } from "./types";
@@ -171,7 +172,7 @@ function clampMin(value: number): number {
 }
 
 function eventMatchesDay(event: Pick<FixedEvent, "daysOfWeek" | "specificDate">, day: Date): boolean {
-  if (event.specificDate) return event.specificDate === toISODate(day);
+  if (event.specificDate) return event.specificDate.slice(0, 10) === toISODate(day);
   return event.daysOfWeek.includes(weekday(day));
 }
 
@@ -222,6 +223,26 @@ function occupanciesForBlocks(blocks: ScheduledBlock[], day: Date): Occupancy[] 
     });
 }
 
+function occupanciesForSessions(
+  sessions: StudySession[],
+  day: Date,
+  taskTitles: Record<string, string> = {},
+): Occupancy[] {
+  const key = toISODate(day);
+  return sessions
+    .filter((session) => !session.skipped && session.dateKey === key)
+    .map((session) => {
+      const name = taskTitles[session.taskId] || session.focus || "Study session";
+      return {
+        id: session.id,
+        title: taskTitles[session.taskId] ? `Study: ${name}` : name,
+        startMin: session.startMin,
+        endMin: session.endMin,
+        kind: "work" as const,
+      };
+    });
+}
+
 function overlapMinutes(a: Occupancy, b: Occupancy): number {
   const start = Math.max(a.startMin, b.startMin);
   const end = Math.min(a.endMin, b.endMin);
@@ -241,8 +262,9 @@ function clockRange(startMin: number, endMin: number): string {
 export function detectTimeConflicts(
   candidate: EventDraft,
   events: FixedEvent[],
-  blocks: ScheduledBlock[] = [],
+  studySessions: StudySession[] = [],
   now = new Date(),
+  taskTitles: Record<string, string> = {},
 ): TimeConflict[] {
   const conflicts: TimeConflict[] = [];
   const seen = new Set<string>();
@@ -254,7 +276,7 @@ export function detectTimeConflicts(
       ...events.flatMap((event) =>
         event.id && event.id === candidate.id ? [] : occupanciesForEvent(event, day),
       ),
-      ...occupanciesForBlocks(blocks, day),
+      ...occupanciesForSessions(studySessions, day, taskTitles),
     ];
     for (const left of lefts) {
       for (const right of rights) {
@@ -276,11 +298,16 @@ export function detectTimeConflicts(
   return conflicts;
 }
 
+function taskTitleMap(tasks: Task[]): Record<string, string> {
+  return Object.fromEntries(tasks.map((task) => [task.id, task.title]));
+}
+
 export function detectAllTimeConflicts(state: AppState, now = new Date()): TimeConflict[] {
   const conflicts: TimeConflict[] = [];
   const seen = new Set<string>();
+  const titles = taskTitleMap(state.tasks);
   for (const event of state.events) {
-    for (const hit of detectTimeConflicts(event, state.events, state.blocks, now)) {
+    for (const hit of detectTimeConflicts(event, state.events, state.studySessions ?? [], now, titles)) {
       const key = `${hit.dateKey}:${[hit.left.id, hit.right.id].sort().join(":")}`;
       if (seen.has(key)) continue;
       seen.add(key);

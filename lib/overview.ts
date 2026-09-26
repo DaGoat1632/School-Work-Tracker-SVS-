@@ -213,12 +213,18 @@ export function dueDayWord(iso: string, now = new Date()): string {
   return formatWeekdayLong(new Date(iso).getDay());
 }
 
+function eventDateKey(value?: string) {
+  return (value ?? "").slice(0, 10);
+}
+
 export function eventsOnDay(state: AppState, day: Date) {
   const key = toISODate(day);
   const dow = weekday(day);
-  return state.events.filter((event) =>
-    event.specificDate ? event.specificDate === key : event.daysOfWeek.includes(dow),
-  );
+  return state.events.filter((event) => {
+    const oneOff = eventDateKey(event.specificDate);
+    if (oneOff) return oneOff === key;
+    return event.daysOfWeek.includes(dow);
+  });
 }
 
 export function homeworkBadge(task: Task, state: AppState, now = new Date()): HomeworkBadge {
@@ -363,6 +369,46 @@ function eventTone(category: AppState["events"][number]["category"]): CompactTon
   return "club";
 }
 
+function eventBlocksOnDay(state: AppState, day: Date, includeTravel = true): CompactBlock[] {
+  const blocks: CompactBlock[] = [];
+  const events = [...eventsOnDay(state, day)].sort(
+    (a, b) => minOf(a.startTime) - minOf(b.startTime),
+  );
+  for (const event of events) {
+    const startMin = minOf(event.startTime);
+    const endMin = minOf(event.endTime);
+    if (includeTravel && event.travelMinutesBefore > 0) {
+      blocks.push({
+        id: `${event.id}-tb`,
+        title: `Travel to ${event.title}`,
+        startMin: startMin - event.travelMinutesBefore,
+        endMin: startMin,
+        minutes: event.travelMinutesBefore,
+        tone: "travel",
+      });
+    }
+    blocks.push({
+      id: event.id,
+      title: event.title,
+      startMin,
+      endMin,
+      minutes: Math.max(0, endMin - startMin),
+      tone: eventTone(event.category),
+    });
+    if (includeTravel && event.travelMinutesAfter > 0) {
+      blocks.push({
+        id: `${event.id}-ta`,
+        title: event.category === "sports" ? "Travel home" : `Travel from ${event.title}`,
+        startMin: endMin,
+        endMin: endMin + event.travelMinutesAfter,
+        minutes: event.travelMinutesAfter,
+        tone: "travel",
+      });
+    }
+  }
+  return blocks;
+}
+
 export function studyBlocksForDay(state: AppState, day: Date): CompactBlock[] {
   const key = toISODate(day);
   return (state.studySessions ?? [])
@@ -385,7 +431,6 @@ export function studyBlocksForDay(state: AppState, day: Date): CompactBlock[] {
 export function todayScheduleRows(state: AppState, now = new Date()): CompactBlock[] {
   const day = startOfDay(now);
   const dateKey = toISODate(day);
-  const events = eventsOnDay(state, day);
   const study = (state.studySessions ?? [])
     .filter(
       (session) =>
@@ -408,61 +453,7 @@ export function todayScheduleRows(state: AppState, now = new Date()): CompactBlo
       };
     });
 
-  const rows: CompactBlock[] = [];
-  const school = events.filter((event) => event.category === "school");
-  const others = events.filter((event) => event.category !== "school");
-
-  if (school.length > 0) {
-    const startMin = Math.min(...school.map((event) => minOf(event.startTime)));
-    const endMin = Math.max(...school.map((event) => minOf(event.endTime)));
-    const travelBefore = Math.max(
-      0,
-      ...school.map((event) => event.travelMinutesBefore || 0),
-    );
-    if (travelBefore > 0) {
-      rows.push({
-        id: "travel-to-school",
-        title: "Travel to school",
-        startMin: startMin - travelBefore,
-        endMin: startMin,
-        minutes: travelBefore,
-        tone: "travel",
-      });
-    }
-    rows.push({
-      id: "school",
-      title: school.length === 1 ? school[0].title : "School",
-      startMin,
-      endMin,
-      minutes: Math.max(0, endMin - startMin),
-      tone: "school",
-    });
-  }
-
-  for (const event of others) {
-    const startMin = minOf(event.startTime);
-    const endMin = minOf(event.endTime);
-    rows.push({
-      id: event.id,
-      title: event.title,
-      startMin,
-      endMin,
-      minutes: Math.max(0, endMin - startMin),
-      tone: eventTone(event.category),
-    });
-    if (event.travelMinutesAfter > 0) {
-      rows.push({
-        id: `${event.id}-ta`,
-        title: event.category === "sports" ? "Travel home" : `Travel from ${event.title}`,
-        startMin: endMin,
-        endMin: endMin + event.travelMinutesAfter,
-        minutes: event.travelMinutesAfter,
-        tone: "travel",
-      });
-    }
-  }
-
-  rows.push(...study);
+  const rows: CompactBlock[] = [...eventBlocksOnDay(state, day), ...study];
 
   for (const span of dayFreeSpans(state, day)) {
     rows.push({
@@ -486,50 +477,7 @@ export function compactBlocksForDay(
   now = new Date(),
 ): CompactBlock[] {
   const events = eventsOnDay(state, day);
-  const school = events.filter((event) => event.category === "school");
-  const others = events.filter((event) => event.category !== "school");
-  const blocks: CompactBlock[] = [];
-
-  if (school.length > 0) {
-    const startMin = Math.min(...school.map((event) => minOf(event.startTime)));
-    const endMin = Math.max(...school.map((event) => minOf(event.endTime)));
-    blocks.push({
-      id: "school",
-      title: school.length === 1 ? school[0].title : "School",
-      startMin,
-      endMin,
-      minutes: Math.max(0, endMin - startMin),
-      tone: "school",
-    });
-  }
-
-  for (const event of others.slice(0, 2)) {
-    const startMin = minOf(event.startTime);
-    const endMin = minOf(event.endTime);
-    blocks.push({
-      id: event.id,
-      title: event.title,
-      startMin,
-      endMin,
-      minutes: Math.max(0, endMin - startMin),
-      tone:
-        event.category === "sports"
-          ? "sport"
-          : event.category === "commute"
-            ? "travel"
-            : "club",
-    });
-    if (event.travelMinutesAfter > 0) {
-      blocks.push({
-        id: `${event.id}-ta`,
-        title: event.category === "sports" ? "Travel home" : `Travel from ${event.title}`,
-        startMin: endMin,
-        endMin: endMin + event.travelMinutesAfter,
-        minutes: event.travelMinutesAfter,
-        tone: "travel",
-      });
-    }
-  }
+  const blocks: CompactBlock[] = [...eventBlocksOnDay(state, day)];
 
   const dueToday = state.tasks
     .filter(
@@ -656,20 +604,11 @@ export type MonthChip = {
 
 export function activityChipsForDay(state: AppState, day: Date): MonthChip[] {
   const chips: MonthChip[] = [];
-  const events = eventsOnDay(state, day);
-  const school = events.filter((event) => event.category === "school");
-  if (school.length > 0) {
-    chips.push({
-      id: "school",
-      label: school.length === 1 ? school[0].title : "School",
-      tone: "school",
-    });
-  }
-  for (const event of events.filter((event) => event.category !== "school")) {
+  for (const event of eventsOnDay(state, day)) {
     chips.push({
       id: event.id,
       label: event.title,
-      tone: event.category === "sports" ? "sport" : event.category === "commute" ? "travel" : "club",
+      tone: eventTone(event.category),
     });
   }
   for (const block of studyBlocksForDay(state, day)) {
