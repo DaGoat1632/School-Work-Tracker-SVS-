@@ -1,6 +1,6 @@
 "use client";
 
-import { getCoachDayPlan } from "@/lib/planning";
+import { getCoachDayPlan, tasksDueOnDay } from "@/lib/planning";
 import { eventColor } from "@/lib/labels";
 import type { DayColumn } from "@/lib/plan";
 import {
@@ -21,16 +21,16 @@ type TimelineItem = {
   title: string;
   startMin: number;
   endMin: number;
-  kind: "work" | "event" | "travel" | "free" | "break" | "personal";
+  kind: "work" | "event" | "travel" | "free" | "break" | "personal" | "due";
   color: string;
   minutes: number;
   status?: string;
   workId?: string;
+  taskId?: string;
 };
 
 function buildItems(
   column: DayColumn,
-  planReady: boolean,
   state: ReturnType<typeof useStore>["state"],
 ): TimelineItem[] {
   const items: TimelineItem[] = [];
@@ -71,27 +71,16 @@ function buildItems(
     }
   }
 
-  if (planReady) {
-    for (const block of column.workBlocks) {
-      const start = minutesOf(block.start);
-      const end = minutesOf(block.end);
-      items.push({
-        id: block.id,
-        title: block.title,
-        startMin: start,
-        endMin: end,
-        kind: "work",
-        color: "var(--work)",
-        minutes: block.minutes,
-        status: block.status,
-        workId: block.id,
-      });
-    }
-  }
-
   const coach = getCoachDayPlan(state, column.day);
   for (const item of coach.items) {
-    if (planReady && item.kind === "work") continue;
+    const match =
+      item.kind === "work" && item.taskId
+        ? column.workBlocks.find(
+            (block) =>
+              block.taskId === item.taskId &&
+              Math.abs(minutesOf(block.start) - item.startMin) <= 25,
+          )
+        : undefined;
     items.push({
       id: `${item.kind}-${item.startMin}-${item.title}`,
       title: `${item.emoji} ${item.title}`,
@@ -107,6 +96,24 @@ function buildItems(
               ? "#b56b4a"
               : "var(--ok)",
       minutes: item.minutes,
+      status: match?.status,
+      workId: match?.id,
+      taskId: item.taskId,
+    });
+  }
+
+  for (const task of tasksDueOnDay(state, column.day)) {
+    const due = new Date(task.dueAt);
+    const startMin = Math.max(6 * 60, due.getHours() * 60 + due.getMinutes());
+    items.push({
+      id: `due-${task.id}`,
+      title: `📌 Due · ${task.title}`,
+      startMin,
+      endMin: startMin + 15,
+      kind: "due",
+      color: "#c45c4a",
+      minutes: 15,
+      taskId: task.id,
     });
   }
 
@@ -122,7 +129,7 @@ function DayTimeline({
 }) {
   const { state, toggleBlockDone } = useStore();
   const coach = getCoachDayPlan(state, column.day);
-  const items = buildItems(column, state.planReady, state);
+  const items = buildItems(column, state);
   const workMinutes = coach.workMinutes;
   const hours = Array.from(
     { length: END_HOUR - START_HOUR },
@@ -181,6 +188,7 @@ function DayTimeline({
                       {item.kind === "personal" ? " · personal" : ""}
                       {item.kind === "travel" ? " · travel" : ""}
                       {item.kind === "free" ? " · free time" : ""}
+                      {item.kind === "due" ? " · due" : ""}
                     </p>
                   </div>
                   {item.kind === "work" && item.workId && (
@@ -249,6 +257,8 @@ function DayTimeline({
                             ? 0.7
                             : item.kind === "free"
                               ? 0.35
+                              : item.kind === "due"
+                                ? 0.9
                               : 0.95,
                     }}
                     title={`${item.title} · ${formatDuration(item.minutes)}`}

@@ -1,9 +1,9 @@
 import { DEFAULT_PREFERENCES } from "./types";
 import type { AppState, FixedEvent, Task } from "./types";
-import { addDays, combineDateAndTime, startOfDay, uid } from "./time";
+import { combineDateAndTime, uid } from "./time";
 
-function due(daysFromToday: number, time = "21:00"): string {
-  return combineDateAndTime(addDays(startOfDay(new Date()), daysFromToday), time).toISOString();
+export function dueOnSep25(time: string): string {
+  return combineDateAndTime(new Date(2026, 8, 25), time).toISOString();
 }
 
 export function createSeedState(): AppState {
@@ -44,24 +44,10 @@ export function createSeedState(): AppState {
   const tasks: Task[] = [
     {
       id: uid(),
-      title: "Algebra worksheet 4.2",
-      className: "Algebra II",
-      type: "homework",
-      dueAt: due(1, "08:00"),
-      estimatedMinutes: 40,
-      remainingMinutes: 40,
-      difficulty: "medium",
-      priority: "medium",
-      canSplit: false,
-      completed: false,
-      createdAt: now,
-    },
-    {
-      id: uid(),
       title: "History essay draft",
       className: "US History",
       type: "project",
-      dueAt: due(4, "23:59"),
+      dueAt: dueOnSep25("23:59"),
       estimatedMinutes: 240,
       remainingMinutes: 240,
       difficulty: "hard",
@@ -75,7 +61,7 @@ export function createSeedState(): AppState {
       title: "Chemistry quiz prep",
       className: "Chemistry",
       type: "quiz",
-      dueAt: due(4, "08:00"),
+      dueAt: dueOnSep25("08:00"),
       estimatedMinutes: 90,
       remainingMinutes: 90,
       difficulty: "hard",
@@ -86,24 +72,10 @@ export function createSeedState(): AppState {
     },
     {
       id: uid(),
-      title: "English chapter 6–7",
-      className: "English",
-      type: "reading",
-      dueAt: due(2, "08:00"),
-      estimatedMinutes: 60,
-      remainingMinutes: 60,
-      difficulty: "easy",
-      priority: "low",
-      canSplit: true,
-      completed: false,
-      createdAt: now,
-    },
-    {
-      id: uid(),
       title: "Spanish vocab quiz",
       className: "Spanish",
       type: "quiz",
-      dueAt: due(3, "08:00"),
+      dueAt: dueOnSep25("08:00"),
       estimatedMinutes: 35,
       remainingMinutes: 35,
       difficulty: "easy",
@@ -120,6 +92,7 @@ export function createSeedState(): AppState {
     tasks,
     blocks: [],
     warnings: [],
+    studySessions: [],
     lastPlannedAt: null,
     planReady: false,
     dismissedNotificationIds: [],

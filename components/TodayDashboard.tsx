@@ -1,14 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { formatClock, formatDuration } from "@/lib/format";
 import {
   buildSmartSchedule,
-  formatConflictMessage,
+  detectScheduleConflicts,
   getCoachDayPlan,
-  todayInsights,
 } from "@/lib/planning";
 import { useStore } from "@/lib/store";
-import { formatDue } from "@/lib/time";
+import { addDays, formatDayLabel, startOfDay, toISODate } from "@/lib/time";
 
 function toClock(minutes: number): string {
   const hours = Math.floor(minutes / 60);
@@ -16,125 +16,181 @@ function toClock(minutes: number): string {
   return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
 }
 
-function trackLabel(track: string): string {
-  if (track === "overdue") return "🔴 Overdue";
-  if (track === "at_risk") return "🟠 At risk";
-  if (track === "needs_planning") return "🟡 Needs planning";
-  return "🟢 On track";
+function rangeLabel(startMin: number, endMin: number): string {
+  return `${formatClock(toClock(startMin))}–${formatClock(toClock(endMin))}`;
 }
 
 export function TodayDashboard() {
   const { state } = useStore();
-  const insights = todayInsights(state);
-  const coach = getCoachDayPlan(state, new Date());
-  const smart = buildSmartSchedule(state);
-  const workItems = coach.items.filter((item) => item.kind === "work");
-  const leftover = coach.leftover;
+  const now = new Date();
+  const coach = getCoachDayPlan(state, now, now);
+  const smart = buildSmartSchedule(state, now);
+  const conflicts = detectScheduleConflicts(state, now);
+  const todayKey = toISODate(now);
+
+  const workAndBreaks = coach.items
+    .filter((item) => item.kind === "work" || item.kind === "break")
+    .sort((a, b) => a.startMin - b.startMin);
+  const workItems = workAndBreaks.filter((item) => item.kind === "work");
+  const lastWork = workItems[workItems.length - 1];
+  const firstFocus = workAndBreaks[0];
+  const freeAfter =
+    lastWork &&
+    coach.items
+      .filter((item) => item.kind === "free" && item.startMin >= lastWork.endMin)
+      .sort((a, b) => a.startMin - b.startMin)[0];
+
+  const overdue = smart.plans.some((plan) => plan.track === "overdue");
+  const atRisk = smart.plans.some((plan) => plan.track === "at_risk" || plan.shortBy > 0);
+  const status = overdue
+    ? { emoji: "🔴", text: "You’re running out of time" }
+    : atRisk || conflicts.length > 0
+      ? { emoji: "⚠️", text: "You have something to take care of" }
+      : { emoji: "🟢", text: "You’re on track" };
+
+  const upcoming = [...smart.plans]
+    .filter((plan) => !plan.task.completed)
+    .sort((a, b) => new Date(a.task.dueAt).getTime() - new Date(b.task.dueAt).getTime())
+    .slice(0, 6);
+  const tomorrowKey = toISODate(addDays(startOfDay(now), 1));
+  const dueTomorrow = smart.plans.filter(
+    (plan) => !plan.task.completed && toISODate(new Date(plan.task.dueAt)) === tomorrowKey,
+  );
 
   return (
-    <section className="space-y-3">
-      <h2 className="text-2xl">Today</h2>
+    <main className="space-y-5">
+      <header>
+        <h1 className="text-4xl leading-none">Today 👋</h1>
+        <p className="mt-2 text-[var(--ink-soft)]">What you should do next — not your whole calendar.</p>
+      </header>
 
-      <article className="card p-5" style={{ borderColor: "rgba(42, 106, 74, 0.35)" }}>
-        <p className="chip">Tonight</p>
-        <h3 className="mt-2 text-2xl">🟢 {coach.headline}</h3>
-        <div className="mt-3 flex flex-wrap gap-2 text-sm">
-          <span className="chip">📝 {formatDuration(coach.workMinutes)} planned work</span>
-          <span className="chip">🟢 {formatDuration(coach.freeMinutes)} free time</span>
-          {coach.urgentCount > 0 && (
-            <span className="chip">⚠️ {coach.urgentCount} urgent</span>
-          )}
-          {coach.testCount > 0 && (
-            <span className="chip">📚 {coach.testCount} upcoming test{coach.testCount === 1 ? "" : "s"}</span>
-          )}
-        </div>
-      </article>
+      <section className="flex flex-wrap items-center gap-2">
+        <Link href="/add/work" className="btn work">
+          + Add work
+        </Link>
+        <Link href="/homework" className="btn ghost">
+          Homework
+        </Link>
+      </section>
 
       <article className="card p-5">
-        <h3 className="text-lg">Your plan</h3>
-        {coach.items.length === 0 ? (
-          <p className="mt-2 text-sm text-[var(--ink-soft)]">Nothing left to plan today.</p>
+        <h2 className="text-2xl">Here’s what you need to do</h2>
+
+        {workItems.length > 0 && firstFocus && lastWork ? (
+          <p className="mt-3 text-lg font-medium">
+            🟢 {rangeLabel(firstFocus.startMin, lastWork.endMin)} — Best time to work
+          </p>
+        ) : freeAfter || coach.leftover ? (
+          <p className="mt-3 text-lg font-medium">
+            🟢 {rangeLabel((freeAfter ?? coach.leftover!).startMin, (freeAfter ?? coach.leftover!).endMin)} — Free
+            time
+          </p>
         ) : (
-          <ol className="mt-3 space-y-2">
-            {coach.items.map((item) => (
-              <li key={`${item.kind}-${item.startMin}-${item.title}`}>
-                <p className="font-medium">
-                  {formatClock(toClock(item.startMin))}–{formatClock(toClock(item.endMin))}
-                </p>
-                <p className="text-sm text-[var(--ink-soft)]">
-                  {item.emoji} {item.kind === "break" ? <strong>{item.title}</strong> : item.title}
-                  {item.kind === "work" ? ` · ${formatDuration(item.minutes)}` : ""}
-                  {item.kind === "free" ? ` · ${formatDuration(item.minutes)}` : ""}
-                  {item.kind === "personal" ? ` · ${formatDuration(item.minutes)}` : ""}
-                </p>
+          <p className="mt-3 text-[var(--ink-soft)]">No work recommended for the rest of today.</p>
+        )}
+
+        {workAndBreaks.length > 0 && (
+          <ul className="mt-4 space-y-2">
+            {workAndBreaks.map((item) => (
+              <li key={`${item.kind}-${item.startMin}-${item.title}`} className="text-lg">
+                {rangeLabel(item.startMin, item.endMin)} {item.emoji}{" "}
+                {item.kind === "break" ? "Break" : item.title}
               </li>
             ))}
-          </ol>
+          </ul>
         )}
-        {leftover && leftover.minutes >= 20 && workItems.length > 0 && (
-          <p className="mt-4 text-sm font-medium">
-            After that, {leftover.emoji} {formatClock(toClock(leftover.startMin))}–
-            {formatClock(toClock(leftover.endMin))} is completely free.
+
+        {dueTomorrow.length > 0 && (
+          <div className="mt-4">
+            <p className="font-medium">
+              Due tomorrow
+              {dueTomorrow.some((plan) =>
+                plan.sessions.some((session) => session.dateKey === todayKey),
+              )
+                ? " — do this tonight"
+                : ""}
+            </p>
+            <ul className="mt-2 space-y-1 text-[var(--ink-soft)]">
+              {dueTomorrow.map((plan) => {
+                const tonight = plan.sessions.filter((session) => session.dateKey === todayKey);
+                const later = plan.sessions.filter((session) => session.dateKey !== todayKey);
+                return (
+                  <li key={plan.task.id}>
+                    📌 {plan.task.title}
+                    {tonight.length > 0
+                      ? ` · tonight ${tonight.map((session) => session.label).join("; ")}`
+                      : later.length > 0
+                        ? ` · ${later.map((session) => session.label).join("; ")}`
+                        : plan.planned === 0
+                          ? " · not enough open time left"
+                          : ""}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {workItems.length > 0 && freeAfter && freeAfter.minutes >= 20 && (
+          <p className="mt-4 text-lg font-medium">
+            🟢 {rangeLabel(freeAfter.startMin, freeAfter.endMin)} — Free time
           </p>
         )}
       </article>
 
-      {insights.conflicts.length > 0 && (
-        <div className="warn-card whitespace-pre-line">
-          <strong>
-            ⚠️ {insights.conflicts.length} schedule conflict
-            {insights.conflicts.length === 1 ? "" : "s"}
-          </strong>
-          {insights.conflicts.slice(0, 3).map((hit) => (
-            <p key={`${hit.dateKey}-${hit.right.id}`} className="mt-2 text-sm">
-              {formatConflictMessage(hit)}
-            </p>
-          ))}
-        </div>
-      )}
-
       <article className="card p-5">
-        <h3 className="text-lg">Recommended plan</h3>
-        <p className="mt-1 mb-3 text-sm text-[var(--ink-soft)]">
-          Only the work that needs to happen — with breaks, and real free time left over.
+        <h2 className="text-2xl">Coming up</h2>
+        {upcoming.length === 0 ? (
+          <p className="mt-3 text-[var(--ink-soft)]">No open deadlines.</p>
+        ) : (
+          <ul className="mt-3 space-y-3">
+            {upcoming.map((plan) => {
+              const due = new Date(plan.task.dueAt);
+              const dueLabel = formatDayLabel(due, now);
+              const hasTodaySession = plan.sessions.some((session) => session.dateKey === todayKey);
+              const mark =
+                plan.track === "overdue"
+                  ? "🔴"
+                  : plan.track === "at_risk"
+                    ? "🟠"
+                    : plan.task.type === "quiz" || plan.task.type === "test"
+                      ? "🟡"
+                      : "📚";
+              const statusBit =
+                plan.track === "overdue"
+                  ? "Overdue"
+                  : plan.track === "at_risk"
+                    ? "At risk"
+                    : "On track";
+              return (
+                <li key={plan.task.id}>
+                  <p className="font-medium">
+                    {mark} {plan.task.title} — {dueLabel}
+                  </p>
+                  <p className="text-sm text-[var(--ink-soft)]">
+                    {plan.track === "overdue" ? "🔴" : plan.track === "at_risk" ? "🟠" : "🟢"} {statusBit}
+                    {plan.planned > 0 ? ` · ${formatDuration(plan.planned)} planned` : ""}
+                    {hasTodaySession ? " · working on it today" : ""}
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <p className="mt-4 text-sm text-[var(--ink-soft)]">
+          Full session lists live on{" "}
+          <Link href="/homework" className="font-medium" style={{ color: "var(--ink)" }}>
+            Homework
+          </Link>
+          .
         </p>
-        <ul className="space-y-4">
-          {smart.plans.length === 0 && (
-            <li className="text-sm text-[var(--ink-soft)]">No open assignments.</li>
-          )}
-          {smart.plans.map((plan) => (
-            <li key={plan.task.id}>
-              <p className="font-medium">{plan.task.title}</p>
-              <p className="text-sm text-[var(--ink-soft)]">
-                {trackLabel(plan.track)} · Required {formatDuration(plan.needed)} · Scheduled{" "}
-                {formatDuration(plan.planned)} · Remaining {formatDuration(plan.remaining)} ·{" "}
-                {formatDue(plan.task.dueAt)}
-              </p>
-              {plan.track === "at_risk" && plan.shortBy > 0 && (
-                <div className="mt-2 text-sm" style={{ color: "var(--warn)" }}>
-                  <p>🚨 At risk</p>
-                  <p>You need: {formatDuration(plan.needed)}</p>
-                  <p>Available: {formatDuration(plan.availableBeforeDeadline)}</p>
-                  <p>Short by: {formatDuration(plan.shortBy)}</p>
-                </div>
-              )}
-              {plan.track === "needs_planning" && plan.remaining > 0 && (
-                <p className="mt-2 text-sm text-[var(--ink-soft)]">
-                  {formatDuration(plan.remaining)} still needs a spot on the calendar, and there is
-                  enough time before the deadline to fit it.
-                </p>
-              )}
-              <ul className="mt-1 space-y-1 text-sm text-[var(--ink-soft)]">
-                {plan.sessions.map((session) => (
-                  <li key={`${session.dateKey}-${session.startMin}`}>
-                    {session.date.toLocaleDateString([], { weekday: "long" })} {session.label}
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-        </ul>
       </article>
-    </section>
+
+      <article className="card p-5" style={{ borderColor: "rgba(42, 106, 74, 0.35)" }}>
+        <p className="text-2xl">
+          {status.emoji} {status.text}
+        </p>
+      </article>
+    </main>
   );
 }

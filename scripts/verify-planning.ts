@@ -42,6 +42,7 @@ function state(overrides: Partial<AppState> = {}): AppState {
     events: [],
     tasks: [],
     blocks: [],
+    studySessions: [],
     warnings: [],
     lastPlannedAt: null,
     planReady: false,
@@ -272,8 +273,8 @@ const tueSessions = createTaskPlan(evenings.tasks[0], evenings, now).sessions.fi
   (s) => s.dateKey === toISODate(schoolTuesday),
 );
 assert(
-  "TEST 15 school-day work after 4pm",
-  tueSessions.every((s) => (s.startMin ?? 0) >= 16 * 60),
+  "TEST 15 school-day work after school",
+  tueSessions.every((s) => (s.startMin ?? 0) >= 15 * 60),
   tueSessions.map((s) => String(s.startMin)).join(","),
 );
 
@@ -342,17 +343,17 @@ assert(
   historyPlan.sessions.map((s) => s.dateKey).join(","),
 );
 assert(
-  "TEST 19 school-day work starts at 4pm when free",
+  "TEST 19 school-day work starts after school",
   historyPlan.sessions
     .filter((s) => isAcademicSchoolDay(historyState, s.date))
-    .every((s) => s.startMin === 16 * 60),
+    .every((s) => (s.startMin ?? 0) >= 15 * 60 + 30),
   historyPlan.sessions.map((s) => `${s.dateKey} ${s.startMin}`).join(" | "),
 );
 assert(
-  "TEST 19 no morning or pre-4pm school work",
+  "TEST 19 no morning or during-school work",
   historyPlan.sessions.every((session) => {
     const school = isAcademicSchoolDay(historyState, session.date);
-    if (school) return (session.startMin ?? 0) >= 16 * 60;
+    if (school) return (session.startMin ?? 0) >= 15 * 60 + 30;
     return (session.startMin ?? 0) >= 9 * 60;
   }),
   historyPlan.sessions.map((s) => `${s.dateKey} ${s.startMin}-${s.endMin}`).join(" | "),
@@ -374,7 +375,7 @@ assert(
   generated.blocks.every((block) => {
     const start = new Date(block.start);
     const startMin = start.getHours() * 60 + start.getMinutes();
-    return isAcademicSchoolDay(historyState, start) ? startMin >= 16 * 60 : startMin >= 9 * 60;
+    return isAcademicSchoolDay(historyState, start) ? startMin >= 15 * 60 + 30 : startMin >= 9 * 60;
   }),
   generated.blocks.map((b) => b.start).join(","),
 );
@@ -432,6 +433,65 @@ const needsPlanning = classifyTaskTrack({
   availableMinutesBeforeDeadline: 400,
 });
 assert("TEST 24 remaining with capacity needs planning", needsPlanning.track === "needs_planning" && needsPlanning.shortfallMinutes === 0);
+
+const sundayNow = combineDateAndTime(startOfDay(new Date("2026-09-13T16:06:00")), "16:06");
+const mathMorning = state({
+  events: evenings.events,
+  tasks: [
+    task({
+      id: "math-am",
+      title: "Math homework",
+      dueAt: combineDateAndTime(addDays(startOfDay(sundayNow), 1), "08:00").toISOString(),
+      remainingMinutes: 45,
+      estimatedMinutes: 45,
+    }),
+  ],
+});
+const mathTonight = getCoachDayPlan(mathMorning, sundayNow, sundayNow);
+const mathTomorrowDay = addDays(startOfDay(sundayNow), 1);
+assert(
+  "TEST 25 due-tomorrow morning is planned tonight",
+  mathTonight.items.some((item) => item.kind === "work" && item.title === "Math homework"),
+  mathTonight.items.map((item) => `${item.kind}:${item.title}`).join(", "),
+);
+assert(
+  "TEST 25 still listed as due tomorrow",
+  mathMorning.tasks.filter((item) => toISODate(new Date(item.dueAt)) === toISODate(mathTomorrowDay)).length === 1,
+);
+const mathBlocks = buildSchedule({
+  tasks: mathMorning.tasks,
+  events: mathMorning.events,
+  preferences: mathMorning.preferences,
+  keptBlocks: [],
+});
+const withBlocks = {
+  ...mathMorning,
+  blocks: mathBlocks.blocks,
+  planReady: true,
+};
+assert(
+  "TEST 25 generated blocks do not hide today’s plan",
+  getCoachDayPlan(withBlocks, sundayNow, sundayNow).items.some(
+    (item) => item.kind === "work" && item.title === "Math homework",
+  ),
+);
+
+const mathEvening = state({
+  events: evenings.events,
+  tasks: [
+    task({
+      id: "math-pm",
+      title: "Math homework",
+      dueAt: combineDateAndTime(mathTomorrowDay, "21:00").toISOString(),
+      remainingMinutes: 45,
+      estimatedMinutes: 45,
+    }),
+  ],
+});
+assert(
+  "TEST 25 evening due still scheduled",
+  createTaskPlan(mathEvening.tasks[0], mathEvening, sundayNow).planned === 45,
+);
 
 if (failures.length) {
   console.error(failures.join("\n"));

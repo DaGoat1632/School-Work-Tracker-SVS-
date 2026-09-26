@@ -9,7 +9,7 @@ export default function SettingsPage() {
   return (
     <main className="grid gap-6 md:grid-cols-2">
       <section className="card p-5">
-        <h2 className="text-2xl">Profile & limits</h2>
+        <h2 className="text-lg">Profile and limits</h2>
         <div className="grid-form mt-4">
           <label className="field" style={{ gridColumn: "1 / -1" }}>
             Your name
@@ -105,12 +105,12 @@ export default function SettingsPage() {
         </div>
       </section>
       <section className="card p-5">
-        <h2 className="text-2xl">How planning works</h2>
+        <h2 className="text-lg">How planning works</h2>
         <ol className="mt-4 list-decimal space-y-3 pl-5 text-[var(--ink-soft)]">
           <li>Add work, extracurriculars, sports, and other fixed time.</li>
           <li>Open Weekly and press Generate plan.</li>
           <li>
-            Stride builds today, tomorrow, next week, and the week after.
+            Schedi builds today, tomorrow, next week, and the week after.
           </li>
           <li>Check off blocks as you finish. Rebuild when life changes.</li>
         </ol>

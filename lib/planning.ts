@@ -291,7 +291,7 @@ export function detectAllTimeConflicts(state: AppState, now = new Date()): TimeC
 }
 
 export function formatConflictMessage(conflict: TimeConflict): string {
-  return `⚠️ Time conflict\n${conflict.left.title}: ${clockRange(conflict.left.startMin, conflict.left.endMin)}\n${conflict.right.title}: ${clockRange(conflict.right.startMin, conflict.right.endMin)}\nYou have a ${formatDuration(conflict.overlapMinutes)} overlap.`;
+  return `Time conflict\n${conflict.left.title}: ${clockRange(conflict.left.startMin, conflict.left.endMin)}\n${conflict.right.title}: ${clockRange(conflict.right.startMin, conflict.right.endMin)}\nYou have a ${formatDuration(conflict.overlapMinutes)} overlap.`;
 }
 
 function workWindow(state: AppState): { start: number; end: number } {
@@ -300,6 +300,14 @@ function workWindow(state: AppState): { start: number; end: number } {
   const cutoff = minutesFromMidnight(state.preferences.noWorkAfter);
   const end = Math.min(sleep > start ? sleep : 24 * 60, cutoff > start ? cutoff : 24 * 60);
   return { start, end: Math.max(start + 15, end) };
+}
+
+function dayWorkWindow(state: AppState, day: Date): { start: number; end: number } {
+  const base = workWindow(state);
+  if (isWeekend(day)) return base;
+  const afterSchool = schoolDayEnd(state, day) ?? 15 * 60 + 10;
+  const start = Math.max(base.start, afterSchool);
+  return { start, end: Math.max(start + 15, base.end) };
 }
 
 function schoolDayEnd(state: AppState, day: Date): number | null {
@@ -320,11 +328,11 @@ export function recommendWindow(
   day: Date,
 ): { start: number; end: number } {
   const latest = Math.min(workWindow(state).end, 21 * 60);
-  const schoolEnd = schoolDayEnd(state, day);
-  const start =
-    schoolEnd != null
-      ? Math.max(16 * 60, schoolEnd)
-      : 9 * 60;
+  if (!isWeekend(day)) {
+    const start = schoolDayEnd(state, day) ?? 15 * 60 + 10;
+    return { start, end: Math.max(start + 20, latest) };
+  }
+  const start = 9 * 60;
   return { start, end: Math.max(start + 20, latest) };
 }
 
@@ -343,7 +351,7 @@ export function calculateFreeTime(
 ): FreeSlot[] {
   const includeWork = options?.includeWorkBlocks ?? true;
   const clock = options?.now ?? new Date();
-  const window = workWindow(state);
+  const window = dayWorkWindow(state, day);
   const busy = [
     ...state.events.flatMap((event) => occupanciesForEvent(event, day)),
     ...(includeWork ? occupanciesForBlocks(state.blocks, day) : []),
@@ -662,7 +670,7 @@ function placementInSpan(
   if (take < MIN_FINISH) return null;
   if (take < MIN_WORK && take !== takeMax && take < takeMax) return null;
   const preferred = schoolDay
-    ? [16 * 60, 16 * 60 + 70, 18 * 60, startBound]
+    ? [startBound, 16 * 60, 16 * 60 + 70, 18 * 60]
     : [9 * 60, 10 * 60, 11 * 60, 18 * 60, startBound];
   for (const candidate of preferred) {
     const start = Math.max(startBound, candidate);
@@ -675,10 +683,10 @@ function placementInSpan(
 }
 
 function spanScore(startMin: number, schoolDay: boolean): number {
-  if (schoolDay && startMin < 16 * 60) return -40;
+  if (schoolDay && startMin < 15 * 60 + 10) return -40;
   if (!schoolDay && startMin < 9 * 60) return -40;
   if (startMin >= PERSONAL_START && startMin < PERSONAL_END) return -10;
-  if (schoolDay && startMin >= 16 * 60 && startMin < 17 * 60) return 90;
+  if (schoolDay && startMin >= 15 * 60 + 10 && startMin < 17 * 60) return 90;
   if (!schoolDay && startMin >= 9 * 60 && startMin < 12 * 60) return 90;
   if (startMin >= 18 * 60 && startMin < 21 * 60) return 70;
   if (startMin >= 16 * 60) return 80;
@@ -789,10 +797,7 @@ export function validateRecommendedSessions(
     startDate.setMinutes(session.startMin);
     if (startDate.getTime() >= dueTime) continue;
 
-    const busy = [
-      ...state.events.flatMap((event) => occupanciesForEvent(event, session.date)),
-      ...occupanciesForBlocks(state.blocks, session.date),
-    ];
+    const busy = state.events.flatMap((event) => occupanciesForEvent(event, session.date));
     const booked: Occupancy = {
       id: `rec-${session.taskId}-${session.startMin}`,
       title: session.title,
@@ -802,7 +807,10 @@ export function validateRecommendedSessions(
     };
     if (busy.some((item) => overlapMinutes(item, booked) > 0)) continue;
 
-    const original = calculateFreeTime(state, session.date, { now });
+    const original = calculateFreeTime(state, session.date, {
+      now,
+      includeWorkBlocks: false,
+    });
     const insideFree = original.some(
       (slot) => session.startMin! >= slot.startMin && session.endMin! <= slot.endMin,
     );
@@ -930,7 +938,7 @@ function insertBreaksBetweenWork(
       if (last.endMin == null) continue;
       const shiftedEnd = last.endMin + need;
       if (shiftedEnd > window.end) continue;
-      const original = calculateFreeTime(state, day, { now });
+      const original = calculateFreeTime(state, day, { now, includeWorkBlocks: false });
       const fits = original.some(
         (slot) => current.endMin! >= slot.startMin && shiftedEnd <= slot.endMin,
       );
@@ -975,7 +983,7 @@ export function buildSmartSchedule(state: AppState, now = new Date()): SmartSche
     availability.set(
       toISODate(day),
       subtractBooked(
-        calculateFreeTime(state, day, { now })
+        calculateFreeTime(state, day, { now, includeWorkBlocks: false })
           .map((slot) => ({ startMin: slot.startMin, endMin: slot.endMin }))
           .map((span) => clipSpan(span, window.start, window.end))
           .filter((span): span is OpenSpan => Boolean(span)),
@@ -1315,6 +1323,17 @@ export function recommendStudySessions(
   };
 }
 
+export function tasksDueOnDay(state: AppState, day: Date): Task[] {
+  const dateKey = toISODate(day);
+  return state.tasks.filter(
+    (task) =>
+      !task.completed &&
+      Boolean(task.dueAt) &&
+      workLeft(task) > 0 &&
+      toISODate(new Date(task.dueAt)) === dateKey,
+  );
+}
+
 export function getUpcomingDeadlines(state: AppState, now = new Date()): DeadlineDay[] {
   const days: DeadlineDay[] = [];
   for (let i = 0; i < 7; i += 1) {
@@ -1406,8 +1425,8 @@ export function validateDailyPlan(plan: CoachDayPlan, schoolDay = false): string
     const next = items[i + 1];
     if (next && item.endMin > next.startMin) errors.push(`${item.title} overlaps ${next.title}`);
     if (item.kind === "work" && item.startMin < 9 * 60) errors.push(`${item.title} starts before 9:00`);
-    if (schoolDay && item.kind === "work" && item.startMin < 16 * 60) {
-      errors.push(`${item.title} starts before 4:00 PM on a school day`);
+    if (schoolDay && item.kind === "work" && item.startMin < 15 * 60 + 10) {
+      errors.push(`${item.title} starts before school ends on a school day`);
     }
     if (item.kind === "break") {
       const before = items[i - 1];
@@ -1435,7 +1454,7 @@ export function getCoachDayPlan(state: AppState, day: Date, now = new Date()): C
   const date = startOfDay(day);
   const dateKey = toISODate(date);
   const smart = buildSmartSchedule(state, now);
-  const window = workWindow(state);
+  const window = dayWorkWindow(state, date);
   const schoolDay = isAcademicSchoolDay(state, date);
 
   const workItems: CoachItem[] = smart.plans.flatMap((plan) =>
@@ -1467,9 +1486,6 @@ export function getCoachDayPlan(state: AppState, day: Date, now = new Date()): C
     for (const occ of occupanciesForEvent(event, date)) {
       eventSpans.push({ startMin: occ.startMin, endMin: occ.endMin });
     }
-  }
-  for (const block of occupanciesForBlocks(state.blocks, date)) {
-    eventSpans.push({ startMin: block.startMin, endMin: block.endMin });
   }
 
   const occupied: OpenSpan[] = [
@@ -1540,7 +1556,7 @@ export function getCoachDayPlan(state: AppState, day: Date, now = new Date()): C
   const lastWork = [...workItems].sort((a, b) => a.startMin - b.startMin)[workItems.length - 1];
   const headline = firstWork
     ? schoolDay
-      ? `Tonight ${clockRange(Math.max(firstWork.startMin, 16 * 60), leftoverFree?.endMin ?? lastWork.endMin)} — here’s what I’d do`
+      ? `Tonight ${clockRange(firstWork.startMin, leftoverFree?.endMin ?? lastWork.endMin)} — here’s what I’d do`
       : `${clockRange(firstWork.startMin, lastWork.endMin)} is the best window for today’s work`
     : leftoverFree
       ? `${leftoverFree.emoji} ${clockRange(leftoverFree.startMin, leftoverFree.endMin)} is free`
@@ -1683,7 +1699,7 @@ export function generateDeadlineReminders(
           : `⏰ ${task.title} is due in ${daysLeft} days`,
         message: enough
           ? `You still need about ${formatDuration(needed)}. I found time at ${when}.`
-          : `⚠️ You still need about ${formatDuration(needed)} and there isn’t enough free time before it’s due. Use ${when}.`,
+          : `You still need about ${formatDuration(needed)} and there isn’t enough free time before it’s due. Use ${when}.`,
       });
       continue;
     }
@@ -1749,7 +1765,7 @@ export function generatePlanningNotifications(
       id: `conflict:${conflict.dateKey}:${[conflict.left.id, conflict.right.id].sort().join(":")}`,
       kind: "conflict",
       urgency: "urgent",
-      title: "⚠️ Schedule conflict detected",
+      title: "Schedule conflict detected",
       message: `${conflict.left.title} overlaps ${conflict.right.title} by ${formatDuration(conflict.overlapMinutes)} on ${conflict.date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}.`,
     });
   }

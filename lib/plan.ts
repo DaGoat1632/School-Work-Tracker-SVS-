@@ -11,8 +11,6 @@ import {
   toISODate,
   weekday,
 } from "./time";
-import { HORIZON_DAYS } from "./scheduler";
-
 export type DayColumn = {
   day: Date;
   key: string;
@@ -35,7 +33,9 @@ function freeMinutesForDay(
   events: FixedEvent[],
   preferences: AppState["preferences"],
 ): number {
-  const wake = minutesFromMidnight(preferences.wakeTime);
+  const wake = isWeekend(day)
+    ? minutesFromMidnight(preferences.wakeTime)
+    : afterSchoolStart(day, events);
   const end = Math.min(
     minutesFromMidnight(preferences.sleepTime),
     minutesFromMidnight(preferences.noWorkAfter),
@@ -66,23 +66,93 @@ export function formatFreeHours(minutes: number): string {
   return `${hours.toFixed(1)}H FREE`;
 }
 
-export function weekLoad(state: AppState): {
-  ratio: number;
-  label: "Light" | "Moderate" | "Heavy" | "Intense";
-} {
-  const today = startOfDay(new Date());
-  let free = 0;
-  for (let i = 0; i < HORIZON_DAYS; i += 1) {
-    free += freeMinutesForDay(addDays(today, i), state.events, state.preferences);
+const AFTER_SCHOOL_END = 22 * 60;
+const WEEKDAY_AFTER_SCHOOL = 15 * 60 + 10;
+const WEEKEND_AFTER_SCHOOL = 18 * 60;
+
+function eventOnDay(event: FixedEvent, day: Date): boolean {
+  const dateKey = toISODate(day);
+  return event.specificDate
+    ? event.specificDate === dateKey
+    : event.daysOfWeek.includes(weekday(day));
+}
+
+export function afterSchoolStart(day: Date, events: FixedEvent[]): number {
+  const schoolEnds = events
+    .filter((event) => event.category === "school" && eventOnDay(event, day))
+    .map(
+      (event) =>
+        minutesFromMidnight(event.endTime) + (event.travelMinutesAfter || 0),
+    );
+  if (schoolEnds.length) return Math.max(...schoolEnds);
+  return isWeekend(day) ? WEEKEND_AFTER_SCHOOL : WEEKDAY_AFTER_SCHOOL;
+}
+
+function mergeBusyMinutes(spans: { start: number; end: number }[]): number {
+  const sorted = [...spans]
+    .filter((span) => span.end > span.start)
+    .sort((a, b) => a.start - b.start);
+  if (!sorted.length) return 0;
+  let minutes = 0;
+  let curStart = sorted[0].start;
+  let curEnd = sorted[0].end;
+  for (let i = 1; i < sorted.length; i += 1) {
+    const span = sorted[i];
+    if (span.start <= curEnd) {
+      curEnd = Math.max(curEnd, span.end);
+    } else {
+      minutes += curEnd - curStart;
+      curStart = span.start;
+      curEnd = span.end;
+    }
   }
-  const work = state.tasks
-    .filter((task) => !task.completed)
-    .reduce((sum, task) => sum + task.remainingMinutes, 0);
-  const ratio = free <= 0 ? (work > 0 ? 1 : 0) : Math.min(1, work / free);
-  if (ratio < 0.35) return { ratio, label: "Light" };
-  if (ratio < 0.6) return { ratio, label: "Moderate" };
-  if (ratio < 0.85) return { ratio, label: "Heavy" };
-  return { ratio, label: "Intense" };
+  return minutes + (curEnd - curStart);
+}
+
+export function weekLoad(
+  state: AppState,
+  now = new Date(),
+): {
+  ratio: number;
+  label: "Light" | "Medium" | "Heavy";
+} {
+  const weekStart = startOfWeek(now);
+  let total = 0;
+  let busy = 0;
+
+  for (let i = 0; i < 7; i += 1) {
+    const day = addDays(weekStart, i);
+    const dateKey = toISODate(day);
+    const windowStart = afterSchoolStart(day, state.events);
+    const windowMins = Math.max(0, AFTER_SCHOOL_END - windowStart);
+    total += windowMins;
+
+    const spans: { start: number; end: number }[] = [];
+    for (const event of state.events) {
+      if (event.category === "school" || !eventOnDay(event, day)) continue;
+      const start =
+        minutesFromMidnight(event.startTime) - (event.travelMinutesBefore || 0);
+      const end =
+        minutesFromMidnight(event.endTime) + (event.travelMinutesAfter || 0);
+      spans.push({
+        start: Math.max(start, windowStart),
+        end: Math.min(end, AFTER_SCHOOL_END),
+      });
+    }
+    for (const session of state.studySessions) {
+      if (session.dateKey !== dateKey) continue;
+      spans.push({
+        start: Math.max(session.startMin, windowStart),
+        end: Math.min(session.endMin, AFTER_SCHOOL_END),
+      });
+    }
+    busy += mergeBusyMinutes(spans);
+  }
+
+  const ratio = total <= 0 ? 0 : Math.min(1, busy / total);
+  if (ratio <= 0.5) return { ratio, label: "Light" };
+  if (ratio <= 0.75) return { ratio, label: "Medium" };
+  return { ratio, label: "Heavy" };
 }
 
 export function columnsForDays(state: AppState, days: Date[]): DayColumn[] {

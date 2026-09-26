@@ -103,9 +103,10 @@ export function uid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+/** Week runs Saturday through Friday. */
 export function startOfWeek(date: Date): Date {
   const day = startOfDay(date);
-  const offset = (weekday(day) + 6) % 7;
+  const offset = (weekday(day) + 1) % 7;
   return addDays(day, -offset);
 }
 

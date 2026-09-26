@@ -1,4 +1,4 @@
-# Stride
+# Schedi
 
 A student planner with a Weekly dashboard: add your work and life first, then generate a plan for **today, tomorrow, next week, and the week after**.
 

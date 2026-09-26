@@ -23,18 +23,15 @@ export const EVENT_CATEGORIES: { value: EventCategory; label: string }[] = [
 
 export function eventColor(category: EventCategory): string {
   switch (category) {
-    case "school":
-      return "var(--school)";
     case "sports":
       return "var(--sports)";
     case "club":
-      return "var(--club)";
     case "job":
-      return "var(--job)";
     case "family":
-      return "var(--family)";
+      return "var(--club)";
+    case "school":
     case "commute":
-      return "var(--travel)";
+      return "var(--school)";
     default:
       return "var(--ink-soft)";
   }

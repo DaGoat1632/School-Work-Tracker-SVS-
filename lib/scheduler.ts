@@ -114,6 +114,7 @@ function emptyPlannerState(prefs: Preferences, events: FixedEvent[]): AppState {
     events,
     tasks: [],
     blocks: [],
+    studySessions: [],
     warnings: [],
     lastPlannedAt: null,
     planReady: false,

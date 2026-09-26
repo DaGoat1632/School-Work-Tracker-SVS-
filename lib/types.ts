@@ -55,6 +55,43 @@ export type FixedEvent = {
   travelMinutesAfter: number;
 };
 
+export type AiPlanSession = {
+  day: string;
+  date: string;
+  dateKey?: string;
+  startTime: string;
+  endTime: string;
+  duration: string;
+  focus: string;
+  tip: string;
+};
+
+export type AiStudyPlan = {
+  plan: AiPlanSession[];
+  totalPrepTime: string;
+  readyBy: string;
+  warningMessage: string | null;
+  encouragement: string;
+  testDayTip?: string | null;
+};
+
+export type StudySession = {
+  id: string;
+  taskId: string;
+  userId: string;
+  day: string;
+  date: string;
+  dateKey: string;
+  startTime: string;
+  endTime: string;
+  startMin: number;
+  endMin: number;
+  focus: string;
+  tip: string;
+  completed: boolean;
+  skipped: boolean;
+};
+
 export type Task = {
   id: string;
   title: string;
@@ -68,6 +105,9 @@ export type Task = {
   canSplit: boolean;
   completed: boolean;
   createdAt: string;
+  aiPlan?: AiStudyPlan | null;
+  planAddedToSchedule?: boolean;
+  planGeneratedAt?: string | null;
 };
 
 export type ScheduledBlock = {
@@ -100,6 +140,7 @@ export type AppState = {
   events: FixedEvent[];
   tasks: Task[];
   blocks: ScheduledBlock[];
+  studySessions: StudySession[];
   warnings: Warning[];
   lastPlannedAt: string | null;
   planReady: boolean;

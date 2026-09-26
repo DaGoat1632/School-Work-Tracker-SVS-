@@ -7,7 +7,7 @@ import { useStore } from "@/lib/store";
 import { formatWeekdayLong } from "@/lib/time";
 import type { EventCategory, FixedEvent } from "@/lib/types";
 
-const DAYS = [1, 2, 3, 4, 5, 6, 0];
+const DAYS = [6, 0, 1, 2, 3, 4, 5];
 
 export function EventForm({
   heading = "Add a life block",
@@ -100,7 +100,7 @@ export function EventForm({
       <p className="mt-1 mb-4 text-sm text-[var(--ink-soft)]">{blurb}</p>
       {(conflictOpen || liveConflicts.length > 0) && (
         <div className="warn-card mb-4 whitespace-pre-line">
-          <strong>⚠️ Time conflict</strong>
+          <strong>Time conflict</strong>
           <div className="mt-2 space-y-2 text-sm text-[var(--ink-soft)]">
             {(conflictOpen ? liveConflicts : liveConflicts.slice(0, 2)).map(
               (hit) => (
