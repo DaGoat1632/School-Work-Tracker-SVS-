@@ -1,14 +1,7 @@
 import type { Metadata } from "next";
-import { Outfit } from "next/font/google";
 import "./globals.css";
 import { StoreProvider } from "@/lib/store";
 import { AppShell } from "@/components/AppShell";
-
-const outfit = Outfit({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  weight: ["400", "500", "600"],
-});
 
 export const metadata: Metadata = {
   title: "Schedi",
@@ -22,8 +15,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={outfit.variable}>
-      <body className={outfit.className}>
+    <html lang="en">
+      <body>
         <StoreProvider>
           <AppShell>{children}</AppShell>
         </StoreProvider>
