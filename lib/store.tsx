@@ -9,8 +9,8 @@ import {
   type ReactNode,
 } from "react";
 import { snapStudyClockMins, formatClock, toTimeInput } from "./format";
-import { studySessionsFromPlan } from "./aiStudyPlan";
-import { fitPlanToNeededMinutes } from "./placeStudyPlan";
+import { planFromStudySessions, studySessionsFromPlan } from "./aiStudyPlan";
+import { ensurePlacedPlan, windowsForTask } from "./placeStudyPlan";
 import { buildSchedule } from "./scheduler";
 import { createSeedState } from "./seed";
 import { uid } from "./time";
@@ -127,19 +127,35 @@ function runPlan(state: AppState): AppState {
   };
 }
 
+function placedPlanForTask(state: AppState, task: Task, plan: AiStudyPlan) {
+  const windows = windowsForTask({
+    task,
+    events: state.events,
+    studySessions: state.studySessions,
+    now: new Date(),
+  });
+  return ensurePlacedPlan(task, plan, windows);
+}
+
+function planWithSessionClocks(task: Task, plan: AiStudyPlan, sessions: StudySession[]) {
+  return planFromStudySessions({ ...task, aiPlan: plan }, sessions) ?? plan;
+}
+
 function fitSavedStudyPlans(state: AppState): AppState {
   let sessions = [...(state.studySessions ?? [])];
   const tasks = state.tasks.map((task) => {
     if (!task.aiPlan?.plan?.length) return task;
-    const need = task.remainingMinutes || task.estimatedMinutes || 30;
-    const fitted = fitPlanToNeededMinutes(task.aiPlan, need);
-    if (task.planAddedToSchedule) {
+    const placed = placedPlanForTask({ ...state, studySessions: sessions }, task, task.aiPlan);
+    if (task.planAddedToSchedule || sessions.some((session) => session.taskId === task.id)) {
       sessions = [
         ...sessions.filter((session) => session.taskId !== task.id),
-        ...studySessionsFromPlan(task.id, fitted, [], task.dueAt),
+        ...studySessionsFromPlan(task.id, placed, [], task.dueAt),
       ];
     }
-    return { ...task, aiPlan: fitted };
+    return {
+      ...task,
+      aiPlan: planWithSessionClocks(task, placed, sessions.filter((session) => session.taskId === task.id)),
+    };
   });
   sessions = sessions.map((session) => {
     const snapped = snapStudyClockMins(session.startMin, session.endMin);
@@ -150,7 +166,22 @@ function fitSavedStudyPlans(state: AppState): AppState {
       endTime: formatClock(toTimeInput(snapped.endMin)),
     };
   });
-  return { ...state, tasks, studySessions: sessions };
+  return {
+    ...state,
+    tasks: tasks.map((task) =>
+      task.aiPlan
+        ? {
+            ...task,
+            aiPlan: planWithSessionClocks(
+              task,
+              task.aiPlan,
+              sessions.filter((session) => session.taskId === task.id),
+            ),
+          }
+        : task,
+    ),
+    studySessions: sessions,
+  };
 }
 
 function loadState(): AppState {
@@ -245,16 +276,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return id;
       },
       updateTask: (id, patch) => {
-        setState((current) =>
-          runPlan({
+        setState((current) => {
+          const previous = current.tasks.find((task) => task.id === id);
+          const dueChanged = Boolean(previous && patch.dueAt && patch.dueAt !== previous.dueAt);
+          const hoursChanged = Boolean(
+            previous &&
+              patch.estimatedMinutes != null &&
+              patch.estimatedMinutes !== previous.estimatedMinutes,
+          );
+          const remainingChanged = Boolean(
+            previous &&
+              patch.remainingMinutes != null &&
+              patch.remainingMinutes !== previous.remainingMinutes &&
+              !("completed" in patch),
+          );
+          const replan = dueChanged || hoursChanged || remainingChanged;
+          return runPlan({
             ...current,
             blocks: [],
             warnings: [],
             tasks: current.tasks.map((task) =>
-              task.id === id ? { ...task, ...patch } : task,
+              task.id === id
+                ? {
+                    ...task,
+                    ...patch,
+                    ...(replan
+                      ? { aiPlan: null, planAddedToSchedule: false, planGeneratedAt: null }
+                      : {}),
+                  }
+                : task,
             ),
-          }),
-        );
+            studySessions: replan
+              ? current.studySessions.filter((session) => session.taskId !== id)
+              : current.studySessions,
+          });
+        });
       },
       removeTask: (id) => {
         setState((current) =>
@@ -270,10 +326,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       saveAiPlan: (taskId, plan) => {
         setState((current) => {
           const task = current.tasks.find((item) => item.id === taskId);
-          const need = task?.remainingMinutes || task?.estimatedMinutes || 30;
-          const fitted = fitPlanToNeededMinutes(plan, need);
-          const sessions = fitted.plan.length
-            ? studySessionsFromPlan(taskId, fitted, [], task?.dueAt ?? new Date().toISOString())
+          if (!task) return current;
+          const placed = placedPlanForTask(current, task, plan);
+          const sessions = placed.plan.length
+            ? studySessionsFromPlan(taskId, placed, [], task.dueAt)
             : [];
           return {
             ...current,
@@ -281,7 +337,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               item.id === taskId
                 ? {
                     ...item,
-                    aiPlan: fitted,
+                    aiPlan: planWithSessionClocks(item, placed, sessions),
                     planGeneratedAt: new Date().toISOString(),
                     planAddedToSchedule: sessions.length > 0,
                   }
@@ -298,15 +354,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setState((current) => {
           const task = current.tasks.find((item) => item.id === taskId);
           if (!task?.aiPlan) return current;
-          const fitted = fitPlanToNeededMinutes(
-            task.aiPlan,
-            task.remainingMinutes || task.estimatedMinutes || 30,
-          );
-          const sessions = studySessionsFromPlan(taskId, fitted, [], task.dueAt);
+          const placed = placedPlanForTask(current, task, task.aiPlan);
+          const sessions = studySessionsFromPlan(taskId, placed, [], task.dueAt);
           return {
             ...current,
             tasks: current.tasks.map((item) =>
-              item.id === taskId ? { ...item, aiPlan: fitted, planAddedToSchedule: true } : item,
+              item.id === taskId
+                ? {
+                    ...item,
+                    aiPlan: planWithSessionClocks(item, placed, sessions),
+                    planAddedToSchedule: true,
+                  }
+                : item,
             ),
             studySessions: [
               ...current.studySessions.filter((session) => session.taskId !== taskId),

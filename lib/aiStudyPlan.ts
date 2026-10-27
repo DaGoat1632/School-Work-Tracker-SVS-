@@ -1,7 +1,7 @@
 import { dueIsSoon, isExamType, type FreeWindow } from "./freeWindows";
 import { formatClock, minutesOf, snapStudyClockMins, toTimeInput } from "./format";
 import { addDays, startOfDay, toISODate, uid } from "./time";
-import type { AiPlanSession, AiStudyPlan, StudySession } from "./types";
+import type { AiPlanSession, AiStudyPlan, StudySession, Task } from "./types";
 
 export type PlanTaskInput = {
   title: string;
@@ -73,12 +73,12 @@ TASK:
       ? `If this is a TEST or QUIZ:
     Honor the student's hours needed (${hoursLabel}) exactly. If they left the default, prefer 2 hours total.
     Split into sessions across different days when can-split is yes.
-    Never schedule studying the night before the test.
-    The night before = rest only.
+    Always include a short 20–30 minute "review and get ready" session on the evening before the quiz/test if that day is free and not already used.
+    Do not skip the day before just because earlier study days exist.
     Include testDayTip: one subject-specific tip for test day.`
       : ""
   }
-  ${soon ? "This is due very soon. Generate one emergency session in the only remaining window." : ""}
+  ${soon ? "This is due very soon. Put one session in the longest evening window (prefer 7:00 PM–10:00 PM). Do not use a leftover 15-minute slot if a longer evening gap exists." : ""}
 
 FREE TIME AVAILABLE BEFORE DUE DATE:
 ${windows}
@@ -88,7 +88,8 @@ RULES FOR THE PLAN:
   Each study session = 15 to 90 minutes. Never more than 90 min in one sitting.
   If hours needed is 45 minutes or less, make exactly one session of that length.
   ${split && totalMinutes > 45 ? "Space sessions across different days when possible." : "Do not split — one sitting only, within the hours needed (cap 90 minutes)."}
-  Leave at least one free evening before due date.
+  Prefer 7:00 PM–10:00 PM when that time is free. Do not schedule at 9:45 PM if 7:00 PM is open.
+  Leave at least one free evening before due date when other days exist.
   If not enough free time, warn the student clearly.
   Keep focus instructions specific and actionable.
   Copy dateKey from the matching free window into each session.
@@ -152,7 +153,11 @@ export function resolveSessionDateKey(
   windows: FreeWindow[],
   dueAt: string,
 ): string {
-  if (session.dateKey) return session.dateKey;
+  if (session.dateKey) {
+    if (windows.length === 0 || windows.some((window) => window.dateKey === session.dateKey)) {
+      return session.dateKey;
+    }
+  }
   const byDay = windows.find(
     (window) =>
       window.day.toLowerCase() === session.day.toLowerCase() ||
@@ -173,6 +178,56 @@ export function stampPlanDates(
       ...session,
       dateKey: resolveSessionDateKey(session, windows, dueAt),
     })),
+  };
+}
+
+function durationLabel(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes === 60) return "1 hour";
+  if (minutes === 90) return "1.5 hours";
+  const hours = minutes / 60;
+  return Number.isInteger(hours) ? `${hours} hours` : `${hours.toFixed(1)} hours`;
+}
+
+export function planFromStudySessions(
+  task: Task,
+  sessions: StudySession[],
+): AiStudyPlan | null {
+  const mine = sessions
+    .filter((session) => session.taskId === task.id && !session.skipped)
+    .sort(
+      (a, b) => a.dateKey.localeCompare(b.dateKey) || a.startMin - b.startMin,
+    );
+  if (!mine.length) return task.aiPlan ?? null;
+  return {
+    plan: mine.map((session) => {
+      const date = session.dateKey
+        ? new Date(`${session.dateKey}T12:00:00`)
+        : null;
+      const dateLabel =
+        date && !Number.isNaN(date.getTime())
+          ? date.toLocaleDateString([], { month: "short", day: "numeric" })
+          : session.date;
+      const dayLabel =
+        date && !Number.isNaN(date.getTime())
+          ? date.toLocaleDateString([], { weekday: "long" })
+          : session.day;
+      return {
+        day: dayLabel,
+        date: dateLabel,
+        dateKey: session.dateKey,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        duration: durationLabel(Math.max(15, session.endMin - session.startMin)),
+        focus: session.focus,
+        tip: session.tip,
+      };
+    }),
+    totalPrepTime: task.aiPlan?.totalPrepTime || "",
+    readyBy: task.aiPlan?.readyBy || "",
+    warningMessage: task.aiPlan?.warningMessage ?? null,
+    encouragement: task.aiPlan?.encouragement || "",
+    testDayTip: task.aiPlan?.testDayTip ?? null,
   };
 }
 

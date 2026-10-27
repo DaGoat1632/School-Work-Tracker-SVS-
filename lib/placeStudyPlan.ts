@@ -1,10 +1,12 @@
 import { parseClockToMin } from "./aiStudyPlan";
 import { formatClock, snapToHalfHour, toTimeInput } from "./format";
 import {
+  STUDY_EVENING,
   dueIsSoon,
   getFreeWindows,
   isExamTask,
   nightBeforeKey,
+  preferredStudyStart,
   type FreeWindow,
 } from "./freeWindows";
 import { startOfDay, toISODate } from "./time";
@@ -24,8 +26,10 @@ function sessionInWindow(
   focus: string,
   tip: string,
 ): { session: AiPlanSession; minutes: number } {
-  const take = Math.min(Math.max(minutes, 15), window.endMin - window.startMin, 90);
-  const startMin = snapToHalfHour(window.startMin);
+  let startMin = snapToHalfHour(preferredStudyStart(window));
+  if (startMin < window.startMin) startMin = window.startMin;
+  if (startMin + 15 > window.endMin) startMin = window.startMin;
+  const take = Math.min(Math.max(minutes, 15), Math.max(0, window.endMin - startMin), 90);
   const endMin = startMin + take;
   return {
     minutes: take,
@@ -111,23 +115,39 @@ export function windowsForTask(input: {
   const busy = (input.studySessions ?? []).filter((session) => session.taskId !== input.task.id);
   const exclude: string[] = [];
   if (exam) exclude.push(toISODate(due));
+  const overdue = startOfDay(due) < startOfDay(now);
+  const toDate = overdue ? now : due;
 
   const args = {
     events: input.events,
     fromDate: now,
-    toDate: due,
+    toDate,
     busySessions: busy,
-    dueEndMin: due.getHours() * 60 + due.getMinutes(),
+    dueEndMin: overdue ? 22 * 60 : due.getHours() * 60 + due.getMinutes(),
   };
 
-  if (exam) {
-    const nightBefore = nightBeforeKey(input.task.dueAt);
-    const withoutNight = getFreeWindows({ ...args, excludeDateKeys: [...exclude, nightBefore] });
-    if (withoutNight.length > 0) return withoutNight;
-    return getFreeWindows({ ...args, excludeDateKeys: exclude });
-  }
-
   return getFreeWindows({ ...args, excludeDateKeys: exclude });
+}
+
+function withExamEveReview(
+  task: { title: string; className?: string; type: string; dueAt: string },
+  plan: AiStudyPlan,
+  windows: FreeWindow[],
+): AiStudyPlan {
+  if (!isExamTask(task) || !plan.plan.length) return plan;
+  const eve = nightBeforeKey(task.dueAt);
+  if (plan.plan.some((session) => session.dateKey === eve)) return plan;
+  const window = windows.find((item) => item.dateKey === eve);
+  if (!window || window.endMin - preferredStudyStart(window) < 20) return plan;
+  const tip = mathTip(task.className || task.title || "this subject");
+  const kind = /\bquiz\b/i.test(task.title) || task.type === "quiz" ? "quiz" : "test";
+  const review = sessionInWindow(
+    window,
+    30,
+    `Review once more and get ready for the ${kind}`,
+    tip,
+  );
+  return { ...plan, plan: [...plan.plan, review.session] };
 }
 
 function mathTip(subject: string): string {
@@ -189,9 +209,10 @@ export function buildLocalStudyPlan(
       sessionInWindow(first, firstTake, "Review all notes, identify weak areas", "Start with the section you find hardest."),
     );
     placed.push(sessionInWindow(second, secondTake, "Practice problems and self-quiz", tip));
-  } else if (soon || windows.length === 1 || needMin <= 45) {
+  } else if (soon || windows.length === 1 || needMin <= 45 || daysBeforeDue(windows[0], task.dueAt) <= 0) {
     const window = windows[0];
-    const minutes = Math.min(90, Math.max(15, Math.min(needMin, window.endMin - window.startMin)));
+    const start = preferredStudyStart(window);
+    const minutes = Math.min(90, Math.max(15, Math.min(needMin, window.endMin - start)));
     placed.push(
       sessionInWindow(
         window,
@@ -218,24 +239,29 @@ export function buildLocalStudyPlan(
 
   const minutesPlaced = placed.reduce((sum, item) => sum + item.minutes, 0);
   const last = placed[placed.length - 1]?.session;
+  const chosen = placed[0]?.session;
   const warning = soon
-    ? `This is due very soon. Here is your only available study window: ${windows[0].day} ${windows[0].start} – ${windows[0].end}`
+    ? `This is due very soon. Study ${chosen?.startTime ?? windows[0].start} – ${chosen?.endTime ?? windows[0].end} tonight.`
     : minutesPlaced + 10 < needMin
       ? "There is not enough open evening time to fit every hour before this is due."
       : null;
 
-  return fitPlanToNeededMinutes(
-    {
-      plan: placed.map((item) => item.session),
-      totalPrepTime: durationLabel(needMin),
-      readyBy: last ? `${last.day} ${last.date}` : "",
-      warningMessage: warning,
-      encouragement: soon
-        ? "This is tight, but one focused session still moves this forward."
-        : `These sessions are only for ${task.title} — starting with the first one keeps it calm.`,
-      testDayTip: exam ? tip : null,
-    },
-    needMin,
+  return withExamEveReview(
+    task,
+    fitPlanToNeededMinutes(
+      {
+        plan: placed.map((item) => item.session),
+        totalPrepTime: durationLabel(needMin),
+        readyBy: last ? `${last.day} ${last.date}` : "",
+        warningMessage: warning,
+        encouragement: soon
+          ? "This is tight, but one focused session still moves this forward."
+          : `These sessions are only for ${task.title} — starting with the first one keeps it calm.`,
+        testDayTip: exam ? tip : null,
+      },
+      needMin,
+    ),
+    windows,
   );
 }
 
@@ -255,21 +281,57 @@ export function ensurePlacedPlan(
   const local = fitPlanToNeededMinutes(buildLocalStudyPlan(task, windows), needMin);
   if (!plan?.plan?.length) return local;
   if (windows.length === 0) return fitPlanToNeededMinutes(plan, needMin);
-  return fitPlanToNeededMinutes(
-    {
-      ...plan,
-      plan: plan.plan.map((session, index) => ({
-        ...session,
-        dateKey: session.dateKey || local.plan[index]?.dateKey,
-        focus: session.focus || local.plan[index]?.focus || `Work on ${task.title}`,
-        tip: session.tip || local.plan[index]?.tip || "",
-      })),
-      totalPrepTime: plan.totalPrepTime || local.totalPrepTime,
-      readyBy: plan.readyBy || local.readyBy,
-      warningMessage: plan.warningMessage ?? local.warningMessage,
-      encouragement: plan.encouragement || local.encouragement,
-      testDayTip: plan.testDayTip ?? local.testDayTip,
-    },
-    needMin,
+  const allowed = new Set(windows.map((window) => window.dateKey));
+  const todayKey = windows[0]?.dateKey;
+  const remapped = plan.plan.map((session, index) => {
+    const fallback = local.plan[index] ?? local.plan[0];
+    const keepDay = session.dateKey && allowed.has(session.dateKey);
+    const placed = keepDay
+      ? windows.find((window) => window.dateKey === session.dateKey)
+      : windows.find((window) => window.dateKey === fallback?.dateKey);
+    return {
+      ...session,
+      dateKey: keepDay ? session.dateKey : fallback?.dateKey,
+      day: placed?.day || session.day,
+      date: placed?.date || session.date,
+      startTime: keepDay ? session.startTime : fallback?.startTime || session.startTime,
+      endTime: keepDay ? session.endTime : fallback?.endTime || session.endTime,
+      duration: keepDay ? session.duration : fallback?.duration || session.duration,
+      focus: session.focus || fallback?.focus || `Work on ${task.title}`,
+      tip: session.tip || fallback?.tip || "",
+    };
+  });
+  const localFirst = local.plan[0];
+  const first = remapped[0];
+  const localStart = localFirst ? parseClockToMin(localFirst.startTime) : 0;
+  const firstStart = first ? parseClockToMin(first.startTime) : 0;
+  if (
+    localFirst &&
+    first &&
+    ((todayKey && first.dateKey !== todayKey && windows[0].endMin - windows[0].startMin >= 15) ||
+      (localStart <= STUDY_EVENING + 30 && firstStart >= 21 * 60))
+  ) {
+    remapped[0] = {
+      ...first,
+      ...localFirst,
+      focus: first.focus || localFirst.focus,
+      tip: first.tip || localFirst.tip,
+    };
+  }
+  return withExamEveReview(
+    task,
+    fitPlanToNeededMinutes(
+      {
+        ...plan,
+        plan: remapped,
+        totalPrepTime: plan.totalPrepTime || local.totalPrepTime,
+        readyBy: plan.readyBy || local.readyBy,
+        warningMessage: plan.warningMessage ?? local.warningMessage,
+        encouragement: plan.encouragement || local.encouragement,
+        testDayTip: plan.testDayTip ?? local.testDayTip,
+      },
+      needMin,
+    ),
+    windows,
   );
 }

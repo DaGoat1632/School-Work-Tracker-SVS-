@@ -1034,7 +1034,8 @@ export function buildSmartSchedule(state: AppState, now = new Date()): SmartSche
 
   for (const task of ranked) {
     const needed = neededMinutes(task);
-    const lastDay = startOfDay(new Date(task.dueAt));
+    const dueDay = startOfDay(new Date(task.dueAt));
+    const lastDay = dueDay < today ? today : dueDay;
     const hours = hoursUntil(task.dueAt, now);
     const study = isStudyTask(task);
     const share = dailyShare(task, now, needed);

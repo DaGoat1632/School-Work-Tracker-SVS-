@@ -8,8 +8,8 @@ import {
   occupanciesForEvent,
   scheduleRank,
 } from "./planning";
+import { isExamTask, nightBeforeKey, STUDY_EVENING } from "./freeWindows";
 import { weekLoad, afterSchoolStart } from "./plan";
-import { isExamTask } from "./freeWindows";
 import { addDays, formatWeekdayLong, isWeekend, startOfDay, startOfMonth, startOfWeek, toISODate, weekday } from "./time";
 import type { AppState, Task } from "./types";
 
@@ -73,18 +73,33 @@ export function hoursPhrase(minutes: number): string {
   return Number(label) === 1 ? "1 hour" : `${label} hours`;
 }
 
+function studySpanFromFree(span: { startMin: number; endMin: number }) {
+  const startMin =
+    span.endMin - STUDY_EVENING >= 20 && span.startMin < STUDY_EVENING
+      ? STUDY_EVENING
+      : span.startMin;
+  return { startMin, endMin: span.endMin, minutes: span.endMin - startMin };
+}
+
 function firstEveningSlot(state: AppState, day: Date) {
   const slots = calculateFreeTime(state, day, {
     now: startOfDay(day),
     includeWorkBlocks: false,
-  });
-  return slots
+  })
     .map((slot) => ({
       startMin: slot.startMin,
       endMin: Math.min(slot.endMin, 22 * 60),
     }))
     .filter((slot) => slot.endMin - slot.startMin >= 20)
-    .sort((a, b) => a.startMin - b.startMin)[0] ?? null;
+    .map(studySpanFromFree)
+    .filter((slot) => slot.endMin - slot.startMin >= 20)
+    .sort((a, b) => {
+      const aEve = a.startMin >= STUDY_EVENING ? 1 : 0;
+      const bEve = b.startMin >= STUDY_EVENING ? 1 : 0;
+      if (aEve !== bEve) return bEve - aEve;
+      return b.endMin - b.startMin - (a.endMin - a.startMin);
+    });
+  return slots[0] ?? null;
 }
 
 function longestEveningSlot(state: AppState, day: Date) {
@@ -270,30 +285,34 @@ export function tonightWindow(state: AppState, now = new Date()) {
       .filter((session) => !session.skipped)
       .map((session) => session.taskId),
   );
-  const open = state.tasks.filter((task) => !task.completed);
-  const upcomingTest = [...open]
-    .filter((task) => isExamTask(task))
+  const stillOpen = (task: Task) =>
+    !task.completed &&
+    !scheduledIds.has(task.id) &&
+    !task.planAddedToSchedule &&
+    (task.remainingMinutes || task.estimatedMinutes) > 0;
+  const examEve = examsMissingEveReview(state, now)[0];
+  const upcomingTest = [...state.tasks]
+    .filter((task) => stillOpen(task) && isExamTask(task))
     .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime())[0];
-  const unscheduled = [...open]
-    .filter(
-      (task) =>
-        !scheduledIds.has(task.id) &&
-        (task.remainingMinutes || task.estimatedMinutes) > 0,
-    )
+  const unscheduled = [...state.tasks]
+    .filter(stillOpen)
     .sort((a, b) => {
       const rank = scheduleRank(a, now) - scheduleRank(b, now);
       if (rank !== 0) return rank;
       return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
     })[0];
-  const kind =
-    upcomingTest?.type === "quiz" || /\bquiz\b/i.test(upcomingTest?.title ?? "")
-      ? "quiz"
-      : "test";
-  const heroLine = upcomingTest
-    ? `Consider using your free time for your upcoming ${kind} — ${upcomingTest.title}.`
-    : unscheduled
-      ? `Use it for ${unscheduled.title} — due ${dueDayWord(unscheduled.dueAt, now)}`
-      : "Great time to get ahead";
+  const examKind = (task: Task) =>
+    task.type === "quiz" || /\bquiz\b/i.test(task.title) ? "quiz" : "test";
+  const todayKey = toISODate(now);
+  const heroLine = examEve
+    ? nightBeforeKey(examEve.dueAt) === todayKey
+      ? `${examKind(examEve) === "quiz" ? "Quiz" : "Test"} tomorrow — review ${examEve.title} tonight so you're ready.`
+      : `${examEve.title} is ${dueDayWord(examEve.dueAt, now)} — the day before has no study slot. Plan a short review so you're ready.`
+    : upcomingTest
+      ? `Consider using your free time for your upcoming ${examKind(upcomingTest)} — ${upcomingTest.title}.`
+      : unscheduled
+        ? `Use it for ${unscheduled.title} — due ${dueDayWord(unscheduled.dueAt, now)}`
+        : "Great time to get ahead";
   return {
     startMin: longest.startMin,
     endMin: longest.endMin,
@@ -305,18 +324,28 @@ export function tonightWindow(state: AppState, now = new Date()) {
 }
 
 export function homeConflicts(state: AppState, now = new Date()) {
+  const tonight = tonightWindow(state, now);
+  const todayKey = toISODate(now);
   return [...state.tasks]
     .filter((task) => !task.completed)
-    .map((task) => ({ task, plan: createTaskPlan(task, state, now) }))
-    .filter(
-      ({ plan }) =>
-        plan.track === "at_risk" || plan.track === "overdue" || plan.shortBy > 0,
-    )
+    .map((task) => {
+      const plan = createTaskPlan(task, state, now);
+      const dueToday = toISODate(new Date(task.dueAt)) === todayKey;
+      const needed = task.remainingMinutes || task.estimatedMinutes || 0;
+      const freeBefore = dueToday ? tonight.minutes : plan.availableBeforeDeadline;
+      const tight = dueToday
+        ? needed > freeBefore
+        : plan.track === "at_risk" || plan.track === "overdue" || plan.shortBy > 0;
+      return { task, dueToday, freeBefore, tight };
+    })
+    .filter((row) => row.tight)
     .sort((a, b) => new Date(a.task.dueAt).getTime() - new Date(b.task.dueAt).getTime())
     .slice(0, 2)
-    .map(({ task, plan }) => ({
+    .map(({ task, dueToday, freeBefore }) => ({
       id: task.id,
-      text: `${task.title} is due ${dueDayWord(task.dueAt, now)} — only ${hoursNice(plan.availableBeforeDeadline)} free before then. Tonight is your best window.`,
+      text: dueToday
+        ? `${task.title} is due today — ${hoursNice(freeBefore)} free tonight. Use this window before the deadline.`
+        : `${task.title} is due ${dueDayWord(task.dueAt, now)} — only ${hoursNice(freeBefore)} free before then. Tonight is your best window.`,
     }));
 }
 
@@ -428,6 +457,104 @@ export function studyBlocksForDay(state: AppState, day: Date): CompactBlock[] {
     });
 }
 
+function examsMissingEveReview(state: AppState, now = new Date()) {
+  const today = startOfDay(now);
+  return [...state.tasks]
+    .filter((task) => !task.completed && isExamTask(task))
+    .filter((task) => startOfDay(new Date(task.dueAt)) > today)
+    .filter((task) => {
+      const eve = nightBeforeKey(task.dueAt);
+      return !(state.studySessions ?? []).some(
+        (session) => session.taskId === task.id && session.dateKey === eve && !session.skipped,
+      );
+    })
+    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+}
+
+function examEveTasksForDay(state: AppState, day: Date) {
+  const key = toISODate(day);
+  return examsMissingEveReview(state, day).filter((task) => nightBeforeKey(task.dueAt) === key);
+}
+
+function homeworkForOpenDay(state: AppState, day: Date, now: Date) {
+  const dayStart = startOfDay(day);
+  const isToday = toISODate(day) === toISODate(now);
+  const booked = new Set(
+    (state.studySessions ?? [])
+      .filter((session) => !session.skipped)
+      .map((session) => session.taskId),
+  );
+  return [...state.tasks]
+    .filter((task) => {
+      if (task.completed) return false;
+      if ((task.remainingMinutes || task.estimatedMinutes) <= 0) return false;
+      if (booked.has(task.id) || task.aiPlan?.plan?.length) return false;
+      const due = startOfDay(new Date(task.dueAt));
+      if (due.getTime() === dayStart.getTime()) return true;
+      if (isToday && due < dayStart) return true;
+      if (isToday) return true;
+      return false;
+    })
+    .sort((a, b) => {
+      const rank = scheduleRank(a, now) - scheduleRank(b, now);
+      if (rank !== 0) return rank;
+      return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
+    });
+}
+
+function placeHomeworkInFree(
+  state: AppState,
+  day: Date,
+  now: Date,
+  free: { startMin: number; endMin: number; minutes: number }[],
+) {
+  const spans = free.map((span) => ({ ...span }));
+  const blocks: CompactBlock[] = [];
+  const queue = [
+    ...examEveTasksForDay(state, day).map((task) => ({ task, take: 30, review: true })),
+    ...homeworkForOpenDay(state, day, now)
+      .slice(0, 2)
+      .map((task) => ({ task, take: 0, review: false })),
+  ];
+  for (const item of queue) {
+    const span = [...spans]
+      .map(studySpanFromFree)
+      .filter((slot) => slot.endMin - slot.startMin >= 20)
+      .sort((a, b) => {
+        const aEve = a.startMin >= STUDY_EVENING ? 1 : 0;
+        const bEve = b.startMin >= STUDY_EVENING ? 1 : 0;
+        if (aEve !== bEve) return bEve - aEve;
+        return b.endMin - b.startMin - (a.endMin - a.startMin);
+      })[0];
+    if (!span) break;
+    const live = spans.find(
+      (item) => item.startMin <= span.startMin && item.endMin >= span.endMin,
+    ) ?? spans.find((item) => item.endMin - item.startMin >= 20);
+    if (!live) break;
+    const { task, review } = item;
+    const needed = review ? 30 : task.remainingMinutes || task.estimatedMinutes || 30;
+    const startMin = snapFreeStart(Math.max(live.startMin, span.startMin));
+    const take = Math.min(review ? 30 : 90, Math.max(20, needed), Math.max(0, live.endMin - startMin));
+    const endMin = startMin + take;
+    if (take < 20) continue;
+    blocks.push({
+      id: review ? `eve-${task.id}` : `hw-${task.id}`,
+      title: review ? `Review: ${task.title}` : task.title,
+      startMin,
+      endMin,
+      minutes: take,
+      tone: "homework",
+      detail: review ? "Get ready for tomorrow" : neededLabel(needed),
+    });
+    live.startMin = endMin;
+    live.minutes = live.endMin - live.startMin;
+  }
+  return {
+    blocks,
+    free: spans.map(snapFreeSpan).filter((span) => span.minutes > 15),
+  };
+}
+
 export function todayScheduleRows(state: AppState, now = new Date()): CompactBlock[] {
   const day = startOfDay(now);
   const dateKey = toISODate(day);
@@ -453,9 +580,10 @@ export function todayScheduleRows(state: AppState, now = new Date()): CompactBlo
       };
     });
 
-  const rows: CompactBlock[] = [...eventBlocksOnDay(state, day), ...study];
+  const placed = placeHomeworkInFree(state, day, now, dayFreeSpans(state, day));
+  const rows: CompactBlock[] = [...eventBlocksOnDay(state, day), ...study, ...placed.blocks];
 
-  for (const span of dayFreeSpans(state, day)) {
+  for (const span of placed.free) {
     rows.push({
       id: `free-${span.startMin}`,
       title: span.startMin >= EVENING_START ? "Free evening" : "Free time",
@@ -479,25 +607,34 @@ export function compactBlocksForDay(
   const events = eventsOnDay(state, day);
   const blocks: CompactBlock[] = [...eventBlocksOnDay(state, day)];
 
-  const dueToday = state.tasks
-    .filter(
-      (task) =>
-        !task.completed &&
-        !isExamTask(task) &&
-        !(state.studySessions ?? []).some((session) => session.taskId === task.id && !session.skipped) &&
-        (task.remainingMinutes || task.estimatedMinutes) > 0 &&
-        toISODate(new Date(task.dueAt)) === toISODate(day),
-    )
+  const dueToday = homeworkForOpenDay(state, day, now)
+    .filter((task) => !isExamTask(task))
     .sort((a, b) => scheduleRank(a, now) - scheduleRank(b, now));
 
   const evening = firstEveningSlot(state, day);
-  let cursor = evening?.startMin ?? 17 * 60;
+  let cursor = evening?.startMin ?? STUDY_EVENING;
   const eveningEnd = evening?.endMin ?? 22 * 60;
+  const eveReviews = examEveTasksForDay(state, day);
+  for (const task of eveReviews) {
+    const remaining = Math.max(0, eveningEnd - cursor);
+    if (remaining < 20) break;
+    const take = Math.min(30, remaining);
+    blocks.push({
+      id: `eve-${task.id}`,
+      title: `Review: ${task.title}`,
+      startMin: cursor,
+      endMin: cursor + take,
+      minutes: take,
+      tone: "homework",
+      detail: "Get ready for tomorrow",
+    });
+    cursor += take + 10;
+  }
   for (const task of dueToday.slice(0, 2)) {
     const needed = task.remainingMinutes || task.estimatedMinutes || 30;
     const remaining = Math.max(0, eveningEnd - cursor);
     const fits = needed <= remaining && remaining >= 20;
-    const take = fits ? needed : Math.max(20, remaining);
+    const take = Math.min(90, fits ? needed : Math.max(20, remaining));
     blocks.push({
       id: `hw-${task.id}`,
       title: fits ? task.title : `${task.title} (conflict)`,

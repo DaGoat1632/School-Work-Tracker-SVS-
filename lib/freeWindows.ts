@@ -13,10 +13,9 @@ export type FreeWindow = {
   hoursAvailable: number;
 };
 
-const EVENING_END = 22 * 60;
-const WEEKEND_EVENING_START = 18 * 60;
-const SETTLE_AFTER_SCHOOL = 30;
-const SETTLE_AFTER_ACTIVITY = 15;
+export const EVENING_END = 22 * 60;
+export const STUDY_EVENING = 19 * 60;
+const WEEKEND_DAY_START = 18 * 60;
 
 function eventOnDay(event: FixedEvent, day: Date): boolean {
   if (event.specificDate) return event.specificDate.slice(0, 10) === toISODate(day);
@@ -25,6 +24,59 @@ function eventOnDay(event: FixedEvent, day: Date): boolean {
 
 function hoursLabel(minutes: number): number {
   return Math.round((Math.max(0, minutes) / 60) * 10) / 10;
+}
+
+function mergeBusy(spans: { startMin: number; endMin: number }[]) {
+  const sorted = [...spans]
+    .filter((span) => span.endMin > span.startMin)
+    .sort((a, b) => a.startMin - b.startMin);
+  const out: { startMin: number; endMin: number }[] = [];
+  for (const span of sorted) {
+    const last = out[out.length - 1];
+    if (last && span.startMin <= last.endMin) {
+      last.endMin = Math.max(last.endMin, span.endMin);
+    } else {
+      out.push({ ...span });
+    }
+  }
+  return out;
+}
+
+function gapsInDay(
+  busy: { startMin: number; endMin: number }[],
+  startMin: number,
+  endMin: number,
+) {
+  const open: { startMin: number; endMin: number }[] = [];
+  let cursor = startMin;
+  for (const span of mergeBusy(busy)) {
+    if (span.endMin <= startMin || span.startMin >= endMin) continue;
+    const lo = Math.max(span.startMin, startMin);
+    const hi = Math.min(span.endMin, endMin);
+    if (lo > cursor) open.push({ startMin: cursor, endMin: lo });
+    cursor = Math.max(cursor, hi);
+  }
+  if (endMin > cursor) open.push({ startMin: cursor, endMin });
+  return open.filter((span) => span.endMin - span.startMin >= 15);
+}
+
+function eveningOverlap(window: { startMin: number; endMin: number }) {
+  return Math.min(window.endMin, EVENING_END) - Math.max(window.startMin, STUDY_EVENING);
+}
+
+export function preferredStudyStart(window: { startMin: number; endMin: number }) {
+  if (eveningOverlap(window) >= 20 && window.startMin < STUDY_EVENING) return STUDY_EVENING;
+  return window.startMin;
+}
+
+function sortWindows(windows: FreeWindow[]) {
+  return [...windows].sort((a, b) => {
+    if (a.dateKey !== b.dateKey) return a.dateKey.localeCompare(b.dateKey);
+    const aEve = eveningOverlap(a) >= 20;
+    const bEve = eveningOverlap(b) >= 20;
+    if (aEve !== bEve) return aEve ? -1 : 1;
+    return b.endMin - b.startMin - (a.endMin - a.startMin);
+  });
 }
 
 export function getFreeWindows(input: {
@@ -52,54 +104,47 @@ export function getFreeWindows(input: {
 
     const dayEvents = input.events.filter((event) => eventOnDay(event, cursor));
     const school = dayEvents.filter((event) => event.category === "school");
-    const activities = dayEvents.filter((event) => event.category !== "school");
-
-    let eveningStart = isWeekend(cursor) ? WEEKEND_EVENING_START : 15 * 60 + 10;
+    let dayStart = isWeekend(cursor) ? WEEKEND_DAY_START : 15 * 60 + 10;
     if (school.length > 0) {
-      const schoolEnd = Math.max(...school.map((event) => minutesFromMidnight(event.endTime)));
-      const travelHome = Math.max(...school.map((event) => event.travelMinutesAfter || 0));
-      eveningStart = schoolEnd + travelHome + SETTLE_AFTER_SCHOOL;
-    }
-
-    for (const activity of activities) {
-      const activityEnd = minutesFromMidnight(activity.endTime);
-      const travelHome = activity.travelMinutesAfter || 0;
-      const released = activityEnd + travelHome + SETTLE_AFTER_ACTIVITY;
-      if (released > eveningStart && minutesFromMidnight(activity.startTime) < eveningEnd) {
-        eveningStart = Math.max(eveningStart, released);
-      }
-    }
-
-    for (const session of input.busySessions ?? []) {
-      if (session.dateKey !== dateKey) continue;
-      if (session.endMin > eveningStart && session.startMin < eveningEnd) {
-        eveningStart = Math.max(eveningStart, session.endMin + SETTLE_AFTER_ACTIVITY);
-      }
+      dayStart = Math.max(
+        ...school.map(
+          (event) => minutesFromMidnight(event.endTime) + (event.travelMinutesAfter || 0),
+        ),
+      );
     }
 
     if (dateKey === toISODate(input.fromDate)) {
-      eveningStart = Math.max(
-        eveningStart,
+      dayStart = Math.max(
+        dayStart,
         input.fromDate.getHours() * 60 + input.fromDate.getMinutes(),
       );
     }
 
-    const minutes = eveningEnd - eveningStart;
-    if (minutes < 15) continue;
+    const busy = [
+      ...dayEvents.map((event) => ({
+        startMin: minutesFromMidnight(event.startTime) - (event.travelMinutesBefore || 0),
+        endMin: minutesFromMidnight(event.endTime) + (event.travelMinutesAfter || 0),
+      })),
+      ...(input.busySessions ?? [])
+        .filter((session) => session.dateKey === dateKey)
+        .map((session) => ({ startMin: session.startMin, endMin: session.endMin })),
+    ];
 
-    windows.push({
-      day: formatWeekdayLong(cursor.getDay()),
-      date: cursor.toLocaleDateString([], { month: "short", day: "numeric" }),
-      dateKey,
-      start: formatClock(toTimeInput(eveningStart)),
-      end: formatClock(toTimeInput(eveningEnd)),
-      startMin: eveningStart,
-      endMin: eveningEnd,
-      hoursAvailable: hoursLabel(minutes),
-    });
+    for (const gap of gapsInDay(busy, dayStart, eveningEnd)) {
+      windows.push({
+        day: formatWeekdayLong(cursor.getDay()),
+        date: cursor.toLocaleDateString([], { month: "short", day: "numeric" }),
+        dateKey,
+        start: formatClock(toTimeInput(gap.startMin)),
+        end: formatClock(toTimeInput(gap.endMin)),
+        startMin: gap.startMin,
+        endMin: gap.endMin,
+        hoursAvailable: hoursLabel(gap.endMin - gap.startMin),
+      });
+    }
   }
 
-  return windows;
+  return sortWindows(windows);
 }
 
 export function isExamType(type: string): boolean {

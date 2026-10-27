@@ -463,6 +463,13 @@ textarea {
   align-items: center;
   justify-content: space-between;
   min-width: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.week-cell.selected:not(.today) {
+  box-shadow: inset 0 0 0 1.5px var(--orange);
 }
 
 .week-cell.today {

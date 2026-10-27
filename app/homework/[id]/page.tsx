@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { StudyPlanModal } from "@/components/StudyPlanModal";
+import { planFromStudySessions } from "@/lib/aiStudyPlan";
 import { isExamType } from "@/lib/freeWindows";
 import { planHoursForTask } from "@/lib/requestStudyPlan";
 import { useStore } from "@/lib/store";
@@ -24,6 +25,8 @@ export default function TaskDetailPage() {
       </div>
     );
   }
+
+  const viewPlan = planFromStudySessions(task, sessions) ?? task.aiPlan;
 
   async function regenerate() {
     if (!task) return;
@@ -95,10 +98,10 @@ export default function TaskDetailPage() {
         </button>
       )}
 
-      {showPlan && task.aiPlan && (
+      {showPlan && viewPlan && (
         <StudyPlanModal
           task={task}
-          plan={task.aiPlan}
+          plan={viewPlan}
           onAdd={task.planAddedToSchedule ? undefined : () => addPlanToSchedule(task.id)}
           onClose={() => setShowPlan(false)}
         />

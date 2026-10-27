@@ -7,6 +7,7 @@ import { formatHoursShort } from "@/lib/format";
 import { hoursForTask } from "@/lib/placeStudyPlan";
 import { homeworkBadge } from "@/lib/overview";
 import { createTaskPlan } from "@/lib/planning";
+import { planFromStudySessions } from "@/lib/aiStudyPlan";
 import { planHoursForTask } from "@/lib/requestStudyPlan";
 import { useStore } from "@/lib/store";
 import { formatDue } from "@/lib/time";
@@ -306,6 +307,10 @@ export default function HomeworkPage() {
     });
   const done = state.tasks.filter((task) => task.completed);
   const atRisk = open.filter((task) => homeworkBadge(task, state, now) === "Urgent").length;
+  const liveOpen = openTask
+    ? (state.tasks.find((item) => item.id === openTask.id) ?? openTask)
+    : null;
+  const openPlan = liveOpen ? planFromStudySessions(liveOpen, state.studySessions) : null;
 
   async function planIt(task: Task) {
     setBusyId(task.id);
@@ -320,7 +325,7 @@ export default function HomeworkPage() {
         return;
       }
       saveAiPlan(task.id, result.plan);
-      setOpenTask({ ...task, aiPlan: result.plan, planAddedToSchedule: true });
+      setOpenTask({ ...task, aiPlan: result.plan, planAddedToSchedule: true, id: task.id });
     } catch {
       return;
     } finally {
@@ -359,8 +364,14 @@ export default function HomeworkPage() {
         onEdit={() => setEditingId(task.id)}
         onCancelEdit={() => setEditingId(null)}
         onSave={(patch) => {
+          const needsPlan =
+            Boolean(patch.dueAt && patch.dueAt !== task.dueAt) ||
+            Boolean(
+              patch.estimatedMinutes != null && patch.estimatedMinutes !== task.estimatedMinutes,
+            );
           updateTask(task.id, patch);
           setEditingId(null);
+          if (needsPlan) void planIt({ ...task, ...patch });
         }}
         onAskRemove={() => setRemoveTaskItem(task)}
       />
@@ -388,21 +399,21 @@ export default function HomeworkPage() {
         </section>
       )}
 
-      {openTask?.aiPlan && (
+      {liveOpen && openPlan?.plan.length ? (
         <StudyPlanModal
-          task={openTask}
-          plan={openTask.aiPlan}
+          task={liveOpen}
+          plan={openPlan}
           onAdd={
-            openTask.planAddedToSchedule
+            liveOpen.planAddedToSchedule
               ? undefined
               : () => {
-                  addPlanToSchedule(openTask.id);
+                  addPlanToSchedule(liveOpen.id);
                   setOpenTask(null);
                 }
           }
           onClose={() => setOpenTask(null)}
         />
-      )}
+      ) : null}
 
       {removeTaskItem && (
         <div className="hw-remove-overlay">

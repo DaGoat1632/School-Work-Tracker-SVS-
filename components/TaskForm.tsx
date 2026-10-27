@@ -8,6 +8,7 @@ import {
   StudyPlanModal,
 } from "@/components/StudyPlanModal";
 import { TASK_TYPES } from "@/lib/labels";
+import { planFromStudySessions } from "@/lib/aiStudyPlan";
 import { planHoursForTask } from "@/lib/requestStudyPlan";
 import { isExamType } from "@/lib/freeWindows";
 import { useStore } from "@/lib/store";
@@ -308,17 +309,22 @@ export function TaskForm() {
         </button>
       </form>
 
-      {afterSave?.kind === "plan" && (
-        <StudyPlanModal
-          task={afterSave.task}
-          plan={afterSave.plan}
-          onAdd={() => {
-            addPlanToSchedule(afterSave.task.id);
-            setAfterSave(null);
-          }}
-          onClose={() => setAfterSave(null)}
-        />
-      )}
+      {afterSave?.kind === "plan" &&
+        (() => {
+          const live = state.tasks.find((item) => item.id === afterSave.task.id) ?? afterSave.task;
+          const plan = planFromStudySessions(live, state.studySessions) ?? afterSave.plan;
+          return (
+            <StudyPlanModal
+              task={live}
+              plan={plan}
+              onAdd={() => {
+                addPlanToSchedule(live.id);
+                setAfterSave(null);
+              }}
+              onClose={() => setAfterSave(null)}
+            />
+          );
+        })()}
       {afterSave?.kind === "noTime" && (
         <NoFreeTimeModal task={afterSave.task} onClose={() => setAfterSave(null)} />
       )}

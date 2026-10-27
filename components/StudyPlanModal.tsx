@@ -12,6 +12,20 @@ function dueDay(task: Task): string {
   });
 }
 
+function sessionWhen(session: { day: string; date: string; dateKey?: string }): string {
+  if (session.dateKey) {
+    const date = new Date(`${session.dateKey}T12:00:00`);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleDateString([], {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+      });
+    }
+  }
+  return `${session.day} ${session.date}`.trim();
+}
+
 export function StudyPlanOverlay({
   children,
   onClose,
@@ -56,9 +70,7 @@ export function StudyPlanModal({
           <ul>
             {plan.plan.map((session, index) => (
               <li key={`${session.dateKey ?? session.date}-${index}`} className="session-card">
-                <p className="session-when">
-                  {session.day} {session.date}
-                </p>
+                <p className="session-when">{sessionWhen(session)}</p>
                 <p className="session-clock">
                   {session.startTime} – {session.endTime}
                   {session.duration ? ` · ${session.duration}` : ""}
@@ -70,19 +82,27 @@ export function StudyPlanModal({
           </ul>
 
           {exam && (
-            <p className="mt-3 text-sm text-[var(--ink-soft)]">Night before: Rest — you&apos;re prepared.</p>
+            <p className="mt-3 text-sm text-[var(--ink-soft)]">
+              Night before: a short review to get ready, then rest.
+            </p>
           )}
           {plan.encouragement && <p className="plan-encourage">{plan.encouragement}</p>}
 
           <div className="mt-5 flex flex-wrap gap-2">
-            {onAdd && (
-              <button type="button" className="btn work" onClick={onAdd}>
-                Add to my schedule
+            {onAdd ? (
+              <>
+                <button type="button" className="btn work" onClick={onAdd}>
+                  Add to my schedule
+                </button>
+                <button type="button" className="btn secondary" onClick={onClose}>
+                  Maybe later
+                </button>
+              </>
+            ) : (
+              <button type="button" className="btn work" onClick={onClose}>
+                Done
               </button>
             )}
-            <button type="button" className="btn secondary" onClick={onClose}>
-              Maybe later
-            </button>
           </div>
         </div>
       </div>
