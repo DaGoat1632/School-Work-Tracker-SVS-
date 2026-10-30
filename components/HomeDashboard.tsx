@@ -14,7 +14,7 @@ import {
 import { useStore } from "@/lib/store";
 
 export function HomeDashboard() {
-  const { state } = useStore();
+  const { state, updateStudySession } = useStore();
   const now = new Date();
   const tonight = tonightWindow(state, now);
   const tasks = weekTaskStats(state, now);
@@ -116,8 +116,20 @@ export function HomeDashboard() {
           ) : (
             <ul>
               {today.map((item) => (
-                <li key={item.id} className="schedule-row">
-                  <span className={`bar ${item.tone}`} />
+                <li key={item.id} className={`schedule-row ${item.done ? "done" : ""}`}>
+                  {item.study ? (
+                    <input
+                      type="checkbox"
+                      className="round-check"
+                      checked={Boolean(item.done)}
+                      onChange={() =>
+                        updateStudySession(item.id, { completed: !item.done, skipped: false })
+                      }
+                      aria-label={`Mark ${item.title} done`}
+                    />
+                  ) : (
+                    <span className={`bar ${item.tone}`} />
+                  )}
                   <div className="min-w-0 flex-1">
                     <p className="text-sm">{item.title}</p>
                     <p className="text-xs text-[var(--ink-soft)]">

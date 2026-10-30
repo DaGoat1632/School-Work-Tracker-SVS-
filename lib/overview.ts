@@ -25,9 +25,10 @@ export type CompactBlock = {
   detail?: string;
   bestWindow?: boolean;
   study?: boolean;
+  done?: boolean;
 };
 
-export type DayDot = "activity" | "conflict" | "free" | "off";
+export type DayDot = "activity" | "conflict" | "study" | "free" | "off";
 
 export type HomeworkBadge = "Urgent" | "Soon" | "OK";
 
@@ -255,10 +256,13 @@ export function studyStreak(state: AppState, now = new Date()): number {
   for (let offset = 0; offset < 21; offset += 1) {
     const day = addDays(startOfDay(now), -offset);
     const key = toISODate(day);
-    const done = state.blocks.some(
+    const doneBlock = state.blocks.some(
       (block) => block.status === "done" && toISODate(new Date(block.start)) === key,
     );
-    if (done) {
+    const doneStudy = (state.studySessions ?? []).some(
+      (session) => session.dateKey === key && session.completed && !session.skipped,
+    );
+    if (doneBlock || doneStudy) {
       streak += 1;
       continue;
     }
@@ -562,7 +566,6 @@ export function todayScheduleRows(state: AppState, now = new Date()): CompactBlo
     .filter(
       (session) =>
         session.dateKey === dateKey &&
-        !session.completed &&
         !session.skipped &&
         session.endMin > session.startMin,
     )
@@ -577,6 +580,7 @@ export function todayScheduleRows(state: AppState, now = new Date()): CompactBlo
         tone: "homework" as const,
         detail: session.focus,
         study: true,
+        done: session.completed,
       };
     });
 
@@ -706,13 +710,15 @@ export function homeworkConflictForDay(state: AppState, day: Date, now = new Dat
 
 export function dayDot(state: AppState, day: Date, now = new Date()): DayDot {
   if (dayHasConflict(state, day, now)) return "conflict";
-  const events = eventsOnDay(state, day);
   const homeworkDue = state.tasks.some(
     (task) =>
       !task.completed && toISODate(new Date(task.dueAt)) === toISODate(day),
   );
-  if (events.some((event) => event.category !== "school") || homeworkDue) return "activity";
-  if (studyBlocksForDay(state, day).length > 0) return "activity";
+  if (homeworkDue) return "conflict";
+  const events = eventsOnDay(state, day);
+  if (events.some((event) => event.category !== "school")) return "activity";
+  if (studyBlocksForDay(state, day).length > 0) return "study";
+  if (isWeekend(day) && events.length === 0) return "off";
   if (!isAcademicSchoolDay(state, day) && events.length === 0) return "off";
   return "free";
 }

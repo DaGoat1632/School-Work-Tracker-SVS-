@@ -1,30 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ScheduleDayDetail } from "@/components/ScheduleDayDetail";
 import { ScheduleRangeNav } from "@/components/ScheduleRangeNav";
-import { formatClock, toTimeInput } from "@/lib/format";
-import {
-  activityChipsForDay,
-  compactBlocksForDay,
-  dayHasConflict,
-  freeMinutesLabel,
-  hoursPhrase,
-  isOpenCalendarDay,
-  monthGridDays,
-} from "@/lib/overview";
-import { getCoachDayPlan } from "@/lib/planning";
+import { activityChipsForDay, monthGridDays } from "@/lib/overview";
 import { useStore } from "@/lib/store";
-import {
-  addMonths,
-  formatWeekdayLong,
-  startOfDay,
-  startOfMonth,
-  toISODate,
-} from "@/lib/time";
-
-function timeLabel(startMin: number): string {
-  return formatClock(toTimeInput(startMin));
-}
+import { addMonths, startOfMonth, toISODate } from "@/lib/time";
 
 export function MonthBoard() {
   const { state } = useStore();
@@ -37,10 +18,6 @@ export function MonthBoard() {
   const selected = grid.find((day) => toISODate(day) === selectedKey) ?? monthStart;
   const inMonth = selected.getMonth() === monthStart.getMonth();
   const day = inMonth ? selected : monthStart;
-  const conflict = dayHasConflict(state, day, now);
-  const coach = getCoachDayPlan(state, day, startOfDay(day));
-  const open = isOpenCalendarDay(state, day);
-  const blocks = open ? [] : compactBlocksForDay(state, day, now);
   const monthLabel = monthStart.toLocaleDateString([], { month: "long", year: "numeric" });
 
   return (
@@ -70,7 +47,7 @@ export function MonthBoard() {
       </div>
 
       <div className="month-weekdays">
-        {["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"].map((label) => (
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
           <p key={label}>{label}</p>
         ))}
       </div>
@@ -104,42 +81,7 @@ export function MonthBoard() {
         })}
       </section>
 
-      <article className={`card overflow-hidden ${conflict ? "day-alert" : ""}`}>
-        <div className={`day-card-head ${conflict ? "conflict" : ""}`}>
-          <p className="day-title">
-            {formatWeekdayLong(day.getDay())} {day.toLocaleDateString([], { month: "short", day: "numeric" })}
-          </p>
-          <p className="free-mins">{freeMinutesLabel(coach.freeMinutes)}</p>
-        </div>
-        {open ? (
-          <div className="open-day">
-            <p>No school or activities today.</p>
-            <p>Great day to get ahead on work.</p>
-          </div>
-        ) : (
-          <ul className="pb-3">
-            {blocks.map((block) => (
-              <li key={block.id} className="week-block">
-                <span className="week-time">
-                  {block.study
-                    ? `${timeLabel(block.startMin)} – ${timeLabel(block.endMin)}`
-                    : timeLabel(block.startMin)}
-                </span>
-                <span className={`bar ${block.tone}`} />
-                <div>
-                  <p className="week-name">{block.title}</p>
-                  <p className="week-detail">
-                    {block.study
-                      ? block.detail
-                      : (block.detail ??
-                        (block.tone === "free" ? hoursPhrase(block.minutes) : `until ${timeLabel(block.endMin)}`))}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </article>
+      <ScheduleDayDetail day={day} now={now} />
     </div>
   );
 }

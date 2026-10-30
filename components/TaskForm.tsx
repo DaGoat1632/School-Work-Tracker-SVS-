@@ -14,15 +14,6 @@ import { isExamType } from "@/lib/freeWindows";
 import { useStore } from "@/lib/store";
 import type { AiStudyPlan, Difficulty, Task, TaskPriority, TaskType } from "@/lib/types";
 
-type SpeechRec = {
-  lang: string;
-  start: () => void;
-  stop: () => void;
-  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
-};
-
 type SavePhase = "idle" | "saving" | "planning";
 type AfterSave =
   | { kind: "plan"; task: Task; plan: AiStudyPlan }
@@ -66,33 +57,9 @@ export function TaskForm() {
   const [difficulty, setDifficulty] = useState<Difficulty>("medium");
   const [priority, setPriority] = useState<TaskPriority>("medium");
   const [canSplit, setCanSplit] = useState(true);
-  const [listening, setListening] = useState(false);
   const [phase, setPhase] = useState<SavePhase>("idle");
   const [dots, setDots] = useState(1);
   const [afterSave, setAfterSave] = useState<AfterSave | null>(null);
-
-  useEffect(() => {
-    if (!listening) return;
-    const Ctor =
-      (window as unknown as { SpeechRecognition?: new () => SpeechRec }).SpeechRecognition ||
-      (window as unknown as { webkitSpeechRecognition?: new () => SpeechRec })
-        .webkitSpeechRecognition;
-    if (!Ctor) {
-      setListening(false);
-      return;
-    }
-    const rec = new Ctor();
-    rec.lang = "en-US";
-    rec.onresult = (event) => {
-      const said = event.results[0]?.[0]?.transcript ?? "";
-      if (said) setTitle(said.replace(/^add\s+/i, "").trim());
-      setListening(false);
-    };
-    rec.onerror = () => setListening(false);
-    rec.onend = () => setListening(false);
-    rec.start();
-    return () => rec.stop();
-  }, [listening]);
 
   useEffect(() => {
     if (phase !== "planning") {
@@ -178,7 +145,7 @@ export function TaskForm() {
       <button
         type="button"
         className="voice-box flex w-full items-center gap-3 text-left"
-        onClick={() => setListening(true)}
+        aria-label="Add by voice, coming soon"
       >
         <span style={{ color: "var(--orange)" }}>
           <IconMic />
@@ -186,7 +153,7 @@ export function TaskForm() {
         <span>
           <span className="block text-sm">Say it instead</span>
           <span className="mt-0.5 block text-xs text-[var(--ink-soft)]">
-            {listening ? "Listening…" : "Math homework due tomorrow, one hour"}
+            Math homework due tomorrow, one hour
           </span>
         </span>
       </button>

@@ -13,7 +13,7 @@ import {
   IconWeek,
 } from "@/components/Icons";
 import { useStore } from "@/lib/store";
-import { addDays, startOfWeek } from "@/lib/time";
+import { weekRangeLabel, startOfWeek } from "@/lib/time";
 
 const NAV = [
   { href: "/", label: "Home", icon: IconHome },
@@ -40,13 +40,9 @@ function pageCopy(pathname: string, name: string) {
     };
   }
   if (pathname.startsWith("/schedule/week")) {
-    const start = startOfWeek(new Date());
-    const end = addDays(start, 6);
-    const left = start.toLocaleDateString([], { month: "short", day: "numeric" });
-    const right = end.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
     return {
-      title: "This week",
-      subtitle: `${left} – ${right} · activities, sports, and homework together`,
+      title: "Schedule",
+      subtitle: `${weekRangeLabel(startOfWeek(new Date()))} · activities, sports, and homework together`,
     };
   }
   if (pathname.startsWith("/homework/") && pathname !== "/homework") {
@@ -115,12 +111,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        <Link href="/add/work" className="voice-btn mt-auto">
+        <button type="button" className="voice-btn mt-auto" aria-label="Add by voice, coming soon">
           <span className="sidebar-icon mt-0.5" style={{ color: "var(--orange)" }}>
             <IconMic />
           </span>
           <span className="text-sm leading-snug">Say it — add anything by voice</span>
-        </Link>
+        </button>
       </aside>
 
       <div className="workspace">

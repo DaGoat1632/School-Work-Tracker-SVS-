@@ -103,11 +103,40 @@ export function uid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-/** Week runs Saturday through Friday. */
+/** Week runs Monday through Sunday. */
 export function startOfWeek(date: Date): Date {
   const day = startOfDay(date);
-  const offset = (weekday(day) + 1) % 7;
+  const offset = (weekday(day) + 6) % 7;
   return addDays(day, -offset);
+}
+
+export function parseISODate(value?: string | null): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  return startOfDay(date);
+}
+
+export function weekOffsetFrom(anchor: Date, now = new Date()): number {
+  const start = startOfWeek(anchor);
+  const current = startOfWeek(now);
+  return Math.round((start.getTime() - current.getTime()) / 86_400_000 / 7);
+}
+
+export function weekRangeLabel(monday: Date): string {
+  const start = startOfWeek(monday);
+  const end = addDays(start, 6);
+  const left = start.toLocaleDateString([], { month: "short", day: "numeric" });
+  const right = end.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+  return `${left} – ${right}`;
+}
+
+export function weekTitle(monday: Date, now = new Date()): string {
+  const offset = weekOffsetFrom(monday, now);
+  if (offset === 0) return "This week";
+  if (offset === -1) return "Last week";
+  if (offset === 1) return "Next week";
+  return `Week of ${startOfWeek(monday).toLocaleDateString([], { month: "short", day: "numeric" })}`;
 }
 
 export function startOfMonth(date: Date): Date {
